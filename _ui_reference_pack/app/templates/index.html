@@ -1,0 +1,110 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>博维AI升级项目驾驶舱</title>
+  <link rel="stylesheet" href="/static/style.css?v=20260526-18">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      corePlugins: { preflight: false },
+      theme: {
+        extend: {
+          colors: {
+            accent: '#2563eb',
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <span class="logo"></span>
+        <span class="brand-text">博维AI驾驶舱</span>
+      </div>
+      <nav class="nav" id="tabs"></nav>
+      <div class="sidebar-foot">
+        <button class="collapse-btn" onclick="toggleSidebar()">
+          <svg id="collapseIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          <span class="collapse-text">收起菜单</span>
+        </button>
+      </div>
+    </aside>
+
+    <div class="main" id="mainWrap">
+      <header class="topbar">
+        <div class="search-box">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <span>搜索项目、任务、文档、会议等</span>
+        </div>
+        <div class="topbar-right">
+          <div class="top-month" id="topMonth"></div>
+          <div class="top-bell" onclick="bellClick()" style="cursor:pointer">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            <span class="bell-badge" id="bellBadge" style="display:none">0</span>
+          </div>
+          <div class="top-user">
+            <span class="user-avatar" id="userAvatar">?</span>
+            <select id="roleSwitch" class="role-select"></select>
+            <button class="logout-btn" onclick="logout()">退出</button>
+          </div>
+        </div>
+      </header>
+
+      <main id="pageContent">
+        <section id="dashboard" class="page active"></section>
+        <section id="updates" class="page"></section>
+        <section id="confirmations" class="page"></section>
+        <section id="tasks" class="page"></section>
+        <section id="achievements" class="page"></section>
+        <section id="issues" class="page"></section>
+        <section id="people" class="page"></section>
+        <section id="settings" class="page"></section>
+      </main>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+  <div id="modal" class="modal hidden">
+    <div class="drawer">
+      <button class="close" onclick="closeModal()" aria-label="关闭">×</button>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <script src="/static/components.js?v=20260526-4"></script>
+  <!-- 妯″潡鍖栨媶鍒?stages 1-4锛氭寜渚濊禆椤哄簭鍔犺浇 -->
+  <script src="/static/src/appState.js?v=1"></script>
+  <script src="/static/src/api/client.js?v=1"></script>
+  <script src="/static/src/api/cache.js?v=1"></script>
+  <script src="/static/src/permissions/userContext.js?v=1"></script>
+  <script src="/static/src/permissions/permissions.js?v=1"></script>
+  <!-- stages 5-6锛氬伐鍏峰嚱鏁板拰閫氱敤缁勪欢 -->
+  <script src="/static/src/utils/date.js?v=1"></script>
+  <script src="/static/src/utils/format.js?v=1"></script>
+  <script src="/static/src/utils/project.js?v=20260528-project-restore1"></script>
+  <script src="/static/src/components/common.js?v=1"></script>
+  <!-- stage 7锛氶椤甸┚椹惰埍 -->
+  <script src="/static/src/pages/dashboard.js?v=1"></script>
+  <!-- stage 8锛氬伐浣滄帹杩涜〃 -->
+  <script src="/static/src/pages/tasks.js?v=1"></script>
+  <!-- stage 9锛氭垚鏋滃簱 -->
+  <script src="/static/src/pages/achievements.js?v=1"></script>
+  <!-- stage 10锛氭彁浜ゆ洿鏂?-->
+  <script src="/static/src/pages/updates.js?v=1"></script>
+  <!-- stage 11锛氶棶棰樹笌鍐崇瓥 -->
+  <script src="/static/src/pages/issues.js?v=20260528-issues-restore1"></script>
+  <!-- stage 14锛氶『搴忕‘璁ら〉 -->
+  <script src="/static/src/pages/confirmations.js?v=20260528-restore1"></script>
+  <!-- stage 12锛氱粍缁囦笌鍒嗗伐 -->
+  <script src="/static/src/pages/people.js?v=1"></script>
+  <script src="/static/src/pages/settings.js?v=20260528-restore1"></script>
+  <script src="/static/app.js?v=20260528-restore1"></script>
+</body>
+</html>
+
+

@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>博维AI驾驶舱 · 成果库</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; box-sizing: border-box; }
+  body { background: #F1F5F9; }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 99px; }
+
+  .nav-item {
+    display:flex; align-items:center; gap:10px; padding:9px 14px;
+    border-radius:8px; color:#94A3B8; font-size:13.5px; font-weight:500;
+    cursor:pointer; transition:all 0.18s; text-decoration:none;
+    border-left:2px solid transparent;
+  }
+  .nav-item:hover { background:rgba(255,255,255,0.07); color:#E2E8F0; }
+  .nav-item.active { background:rgba(14,165,233,0.15); color:#38BDF8; border-left:2px solid #0EA5E9; }
+
+  .card { background:#fff; border-radius:14px; border:1px solid #E9EFF6; box-shadow:0 1px 4px rgba(15,23,42,0.06); }
+
+  /* Result cards */
+  .result-card {
+    background:#fff; border-radius:12px; border:1.5px solid #E9EFF6;
+    padding:14px; cursor:pointer; transition:all 0.18s;
+    box-shadow:0 1px 3px rgba(15,23,42,0.05);
+  }
+  .result-card:hover { border-color:#BAE6FD; box-shadow:0 4px 12px rgba(3,105,161,0.1); transform:translateY(-1px); }
+  .result-card.selected { border-color:#0369A1; box-shadow:0 0 0 3px rgba(3,105,161,0.12); background:#F0F9FF; }
+
+  /* Type tags */
+  .type-fangan  { background:#DBEAFE; color:#1D4ED8; }
+  .type-moban   { background:#FEF3C7; color:#92400E; }
+  .type-sop     { background:#D1FAE5; color:#065F46; }
+  .type-prompt  { background:#EDE9FE; color:#5B21B6; }
+  .type-agent   { background:#FCE7F3; color:#9D174D; }
+  .type-doc     { background:#E0F2FE; color:#0369A1; }
+  .type-tag { display:inline-flex; align-items:center; padding:1px 8px; border-radius:5px; font-size:10.5px; font-weight:700; white-space:nowrap; }
+
+  /* Usage tags */
+  .use-internal { background:#F0FDF4; color:#15803D; border:1px solid #BBF7D0; }
+  .use-project  { background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE; }
+  .use-product  { background:#FFF7ED; color:#C2410C; border:1px solid #FED7AA; }
+  .use-customer { background:#FDF4FF; color:#7E22CE; border:1px solid #E9D5FF; }
+  .use-tag { display:inline-flex; align-items:center; padding:1px 7px; border-radius:5px; font-size:10px; font-weight:600; white-space:nowrap; }
+
+  /* File icon backgrounds */
+  .fi-word   { background:linear-gradient(135deg,#2563EB,#3B82F6); }
+  .fi-ppt    { background:linear-gradient(135deg,#D97706,#F59E0B); }
+  .fi-excel  { background:linear-gradient(135deg,#059669,#10B981); }
+  .fi-pdf    { background:linear-gradient(135deg,#DC2626,#EF4444); }
+  .fi-prompt { background:linear-gradient(135deg,#7C3AED,#A78BFA); }
+  .fi-agent  { background:linear-gradient(135deg,#9D174D,#EC4899); }
+  .fi-icon { width:36px; height:36px; border-radius:9px; display:flex; align-items:center; justify-content:center; flex-shrink:0; color:white; font-size:13px; font-weight:800; }
+
+  /* Stat cards */
+  .stat-card { transition:transform 0.2s, box-shadow 0.2s; }
+  .stat-card:hover { transform:translateY(-2px); box-shadow:0 6px 20px rgba(15,23,42,0.1); }
+
+  /* Table */
+  tbody tr { transition:background 0.12s; cursor:default; }
+  tbody tr:hover { background:#F8FAFC; }
+
+  /* Info rows in detail panel */
+  .drow { display:flex; align-items:flex-start; gap:8px; padding:6px 0; border-bottom:1px solid #F8FAFC; font-size:12px; }
+  .drow:last-child { border-bottom:none; }
+  .dkey { width:60px; flex-shrink:0; color:#64748B; font-weight:600; padding-top:1px; }
+  .dval { flex:1; color:#1E293B; line-height:1.55; }
+
+  /* Version row */
+  .ver-row { display:flex; align-items:center; justify-content:space-between; padding:5px 0; border-bottom:1px solid #F8FAFC; font-size:11.5px; }
+  .ver-row:last-child { border-bottom:none; }
+
+  @keyframes fadeUp { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  .fade-up { animation:fadeUp 0.3s ease both; }
+  @keyframes slideIn { from { opacity:0; transform:translateX(12px); } to { opacity:1; transform:translateX(0); } }
+  .slide-in { animation:slideIn 0.22s ease both; }
+  @media (prefers-reduced-motion:reduce) { * { animation:none!important; transition:none!important; } }
+</style>
+</head>
+<body class="flex h-screen overflow-hidden">
+
+<!-- ═══════ SIDEBAR ═══════ -->
+<aside class="w-56 flex-shrink-0 flex flex-col overflow-hidden" style="background:#0F172A">
+  <div class="flex items-center gap-3 px-5 h-16 border-b flex-shrink-0" style="border-color:rgba(255,255,255,0.08)">
+    <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background:linear-gradient(135deg,#0EA5E9,#0369A1)">
+      <svg style="width:18px;height:18px" class="text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+    </div>
+    <div>
+      <div class="text-white text-sm font-bold tracking-tight leading-none">博维 AI</div>
+      <div class="text-slate-500 text-xs mt-0.5">升级项目驾驶舱</div>
+    </div>
+  </div>
+  <nav class="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+    <a class="nav-item" href="bowei-page1-dashboard.html"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>首页驾驶舱</a>
+    <a class="nav-item" href="bowei-page2-voice.html"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>语音更新</a>
+    <a class="nav-item" href="bowei-page3-meeting.html"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>会议纪要</a>
+    <a class="nav-item" href="bowei-page4-confirm.html"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>AI 确认中心<span class="ml-auto bg-orange-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none">6</span></a>
+    <a class="nav-item" href="bowei-page5-tasks.html"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>工作推进表</a>
+    <div class="pt-4 pb-1 px-2"><div class="text-slate-600 font-semibold uppercase" style="font-size:10px;letter-spacing:0.1em">资源库</div></div>
+    <a class="nav-item active" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
+      成果库
+    </a>
+    <a class="nav-item" href="#"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>问题与决策</a>
+    <a class="nav-item" href="#"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>组织与分工</a>
+    <a class="nav-item" href="#"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>系统设置</a>
+  </nav>
+  <div class="px-4 py-3 border-t flex items-center gap-3 flex-shrink-0" style="border-color:rgba(255,255,255,0.08)">
+    <div class="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0" style="background:linear-gradient(135deg,#3B82F6,#0369A1)">冯</div>
+    <div class="flex-1 min-w-0">
+      <div class="text-white text-sm font-semibold truncate">冯海林</div>
+      <div class="text-slate-500 text-xs truncate">总经理 · 管理员</div>
+    </div>
+  </div>
+</aside>
+
+<!-- ═══════ MAIN ═══════ -->
+<div class="flex-1 flex flex-col overflow-hidden">
+
+  <!-- Top Bar -->
+  <header class="h-16 flex items-center px-6 gap-3 flex-shrink-0 bg-white border-b" style="border-color:#E9EFF6">
+    <div class="flex-1">
+      <h1 class="text-base font-bold text-slate-800">成果库</h1>
+      <p class="text-xs text-slate-400 mt-0.5">沉淀方案、模板、SOP、Prompt、Agent 原型与项目复用资产</p>
+    </div>
+    <select class="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30">
+      <option>全部类型</option><option>方案</option><option>模板</option><option>SOP</option><option>Prompt</option><option>Agent</option><option>文档</option>
+    </select>
+    <select class="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30">
+      <option>全部专项</option><option>知识资产AI化</option><option>顾问作业AI化</option>
+    </select>
+    <select class="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30">
+      <option>全部负责人</option><option>李明</option><option>王雪</option>
+    </select>
+    <select class="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30">
+      <option>复用范围</option><option>内部使用</option><option>项目复用</option><option>产品材料</option>
+    </select>
+    <select class="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30">
+      <option>全部时间</option><option>本周</option><option>本月</option>
+    </select>
+    <div class="relative">
+      <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" style="width:13px;height:13px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+      <input type="text" placeholder="搜索成果名称、关键词" class="pl-8 pr-3 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 w-44"/>
+    </div>
+    <button class="cursor-pointer flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-semibold transition-all hover:opacity-90 active:scale-95" style="background:linear-gradient(135deg,#0369A1,#0EA5E9);box-shadow:0 2px 8px rgba(3,105,161,0.25)">
+      <svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+      上传成果
+    </button>
+  </header>
+
+  <!-- Content -->
+  <div class="flex-1 overflow-hidden flex">
+
+    <!-- Left/Main area -->
+    <div class="flex-1 overflow-y-auto p-6 space-y-5 fade-up">
+
+      <!-- ── Stat Cards ── -->
+      <div class="grid grid-cols-4 gap-4">
+        <div class="card stat-card p-4 flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style="background:linear-gradient(135deg,#0369A1,#0EA5E9)">
+            <svg style="width:22px;height:22px;color:white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
+          </div>
+          <div>
+            <p class="text-xs text-slate-500 font-medium">成果总数</p>
+            <p class="text-3xl font-bold text-slate-800 leading-none mt-1">218</p>
+            <p class="text-xs text-emerald-600 font-medium mt-1 flex items-center gap-1">
+              <svg style="width:10px;height:10px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+              较上月 +18
+            </p>
+          </div>
+        </div>
+        <div class="card stat-card p-4 flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style="background:linear-gradient(135deg,#059669,#34D399)">
+            <svg style="width:22px;height:22px;color:white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+          </div>
+          <div>
+            <p class="text-xs text-slate-500 font-medium">本月新增</p>
+            <p class="text-3xl font-bold text-emerald-600 leading-none mt-1">28</p>
+            <p class="text-xs text-emerald-600 font-medium mt-1 flex items-center gap-1">
+              <svg style="width:10px;height:10px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+              较上月 +9
+            </p>
+          </div>
+        </div>
+        <div class="card stat-card p-4 flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style="background:linear-gradient(135deg,#7C3AED,#A78BFA)">
+            <svg style="width:22px;height:22px;color:white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          </div>
+          <div>
+            <p class="text-xs text-slate-500 font-medium">可复用成果</p>
+            <p class="text-3xl font-bold text-violet-600 leading-none mt-1">156</p>
+            <p class="text-xs text-slate-400 font-medium mt-1">占比 71.6%</p>
+          </div>
+        </div>
+        <div class="card stat-card p-4 flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style="background:linear-gradient(135deg,#D97706,#FBBF24)">
+            <svg style="width:22px;height:22px;color:white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+          </div>
+          <div>
+            <p class="text-xs text-slate-500 font-medium">待优化成果</p>
+            <p class="text-3xl font-bold text-amber-600 leading-none mt-1">19</p>
+            <p class="text-xs text-slate-400 font-medium mt-1">占比 8.7%</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Card Grid ── -->
+      <div>
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-bold text-slate-800">成果列表 <span class="text-slate-400 font-normal">（共 218 项）</span></h2>
+        </div>
+        <div class="grid grid-cols-4 gap-3" id="cardGrid">
+
+          <!-- Card 1: selected -->
+          <div class="result-card selected" onclick="selectCard(this, 0)">
+            <div class="flex items-start justify-between mb-3">
+              <div class="fi-icon fi-word">W</div>
+              <div class="flex items-center gap-1.5">
+                <span class="type-tag type-fangan">方案</span>
+                <input type="checkbox" checked class="w-3.5 h-3.5 rounded accent-blue-600" onclick="event.stopPropagation()">
+              </div>
+            </div>
+            <p class="text-sm font-bold text-slate-800 leading-snug mb-1">智能客服解决方案 v2.0</p>
+            <p class="text-xs text-slate-400 mb-2.5">智能客服AI化</p>
+            <div class="space-y-1 mb-3 text-xs text-slate-500">
+              <div class="flex items-center gap-1.5">
+                <svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+                TSK-202505-017
+              </div>
+              <div class="flex items-center gap-1.5">
+                <svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+                李明 · v2.0
+              </div>
+              <div class="flex items-center gap-1.5">
+                <svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                2025-05-15 16:42
+              </div>
+            </div>
+            <div class="flex items-center gap-1 mb-3 flex-wrap">
+              <span class="use-tag use-internal">内部使用</span>
+              <span class="use-tag use-project">项目复用</span>
+            </div>
+            <div class="flex items-center gap-1.5 pt-2.5 border-t border-slate-100">
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-blue-600 hover:text-blue-800 py-1.5 rounded-lg hover:bg-blue-50 transition-colors" onclick="event.stopPropagation()">查看</button>
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-slate-500 hover:text-slate-700 py-1.5 rounded-lg hover:bg-slate-100 transition-colors" onclick="event.stopPropagation()">关联</button>
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-slate-500 hover:text-slate-700 py-1.5 rounded-lg hover:bg-slate-100 transition-colors flex items-center justify-center gap-1" onclick="event.stopPropagation()">
+                <svg style="width:11px;height:11px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>下载
+              </button>
+            </div>
+          </div>
+
+          <!-- Card 2 -->
+          <div class="result-card" onclick="selectCard(this, 1)">
+            <div class="flex items-start justify-between mb-3">
+              <div class="fi-icon fi-ppt">P</div>
+              <div class="flex items-center gap-1.5">
+                <span class="type-tag type-moban">模板</span>
+                <input type="checkbox" class="w-3.5 h-3.5 rounded accent-blue-600" onclick="event.stopPropagation()">
+              </div>
+            </div>
+            <p class="text-sm font-bold text-slate-800 leading-snug mb-1">知识库构建模板.pptx</p>
+            <p class="text-xs text-slate-400 mb-2.5">知识库平台化</p>
+            <div class="space-y-1 mb-3 text-xs text-slate-500">
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>TSK-202505-012</div>
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>王雪 · v1.3</div>
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>2025-05-13 15:18</div>
+            </div>
+            <div class="flex items-center gap-1 mb-3"><span class="use-tag use-project">项目复用</span><span class="use-tag use-product">产品材料</span></div>
+            <div class="flex items-center gap-1.5 pt-2.5 border-t border-slate-100">
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-blue-600 hover:text-blue-800 py-1.5 rounded-lg hover:bg-blue-50 transition-colors" onclick="event.stopPropagation()">查看</button>
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-slate-500 hover:text-slate-700 py-1.5 rounded-lg hover:bg-slate-100 transition-colors" onclick="event.stopPropagation()">关联</button>
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-slate-500 hover:text-slate-700 py-1.5 rounded-lg hover:bg-slate-100 transition-colors flex items-center justify-center gap-1" onclick="event.stopPropagation()"><svg style="width:11px;height:11px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>下载</button>
+            </div>
+          </div>
+
+          <!-- Card 3 -->
+          <div class="result-card" onclick="selectCard(this, 2)">
+            <div class="flex items-start justify-between mb-3">
+              <div class="fi-icon fi-excel">X</div>
+              <div class="flex items-center gap-1.5">
+                <span class="type-tag type-sop">SOP</span>
+                <input type="checkbox" class="w-3.5 h-3.5 rounded accent-blue-600" onclick="event.stopPropagation()">
+              </div>
+            </div>
+            <p class="text-sm font-bold text-slate-800 leading-snug mb-1">FAQ知识清单.xlsx</p>
+            <p class="text-xs text-slate-400 mb-2.5">智能客服AI化</p>
+            <div class="space-y-1 mb-3 text-xs text-slate-500">
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>TSK-202505-008</div>
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>张伟 · v1.1</div>
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>2025-05-12 11:30</div>
+            </div>
+            <div class="flex items-center gap-1 mb-3"><span class="use-tag use-internal">内部使用</span><span class="use-tag use-customer">客户交付</span></div>
+            <div class="flex items-center gap-1.5 pt-2.5 border-t border-slate-100">
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-blue-600 hover:text-blue-800 py-1.5 rounded-lg hover:bg-blue-50 transition-colors" onclick="event.stopPropagation()">查看</button>
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-slate-500 hover:text-slate-700 py-1.5 rounded-lg hover:bg-slate-100 transition-colors" onclick="event.stopPropagation()">关联</button>
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-slate-500 hover:text-slate-700 py-1.5 rounded-lg hover:bg-slate-100 transition-colors flex items-center justify-center gap-1" onclick="event.stopPropagation()"><svg style="width:11px;height:11px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>下载</button>
+            </div>
+          </div>
+
+          <!-- Card 4 -->
+          <div class="result-card" onclick="selectCard(this, 3)">
+            <div class="flex items-start justify-between mb-3">
+              <div class="fi-icon fi-prompt">P</div>
+              <div class="flex items-center gap-1.5">
+                <span class="type-tag type-prompt">Prompt</span>
+                <input type="checkbox" class="w-3.5 h-3.5 rounded accent-blue-600" onclick="event.stopPropagation()">
+              </div>
+            </div>
+            <p class="text-sm font-bold text-slate-800 leading-snug mb-1">产品需求澄清 Prompt v1.0</p>
+            <p class="text-xs text-slate-400 mb-2.5">需求管理优化</p>
+            <div class="space-y-1 mb-3 text-xs text-slate-500">
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>TSK-202505-006</div>
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>陈晨 · v1.0</div>
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>2025-05-11 09:25</div>
+            </div>
+            <div class="flex items-center gap-1 mb-3"><span class="use-tag use-internal">内部使用</span><span class="use-tag use-project">项目复用</span></div>
+            <div class="flex items-center gap-1.5 pt-2.5 border-t border-slate-100">
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-blue-600 hover:text-blue-800 py-1.5 rounded-lg hover:bg-blue-50 transition-colors" onclick="event.stopPropagation()">查看</button>
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-slate-500 hover:text-slate-700 py-1.5 rounded-lg hover:bg-slate-100 transition-colors" onclick="event.stopPropagation()">关联</button>
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-slate-500 hover:text-slate-700 py-1.5 rounded-lg hover:bg-slate-100 transition-colors flex items-center justify-center gap-1" onclick="event.stopPropagation()"><svg style="width:11px;height:11px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>下载</button>
+            </div>
+          </div>
+
+          <!-- Card 5 -->
+          <div class="result-card" onclick="selectCard(this, 4)">
+            <div class="flex items-start justify-between mb-3">
+              <div class="fi-icon fi-agent">AI</div>
+              <div class="flex items-center gap-1.5">
+                <span class="type-tag type-agent">Agent</span>
+                <input type="checkbox" class="w-3.5 h-3.5 rounded accent-blue-600" onclick="event.stopPropagation()">
+              </div>
+            </div>
+            <p class="text-sm font-bold text-slate-800 leading-snug mb-1">合同审查 Agent 原型 v0.9</p>
+            <p class="text-xs text-slate-400 mb-2.5">法务AI应用</p>
+            <div class="space-y-1 mb-3 text-xs text-slate-500">
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>TSK-202505-003</div>
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>刘洋 · v0.9</div>
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>2025-05-10 18:05</div>
+            </div>
+            <div class="flex items-center gap-1 mb-3"><span class="use-tag use-project">项目复用</span><span class="use-tag use-customer">客户交付</span></div>
+            <div class="flex items-center gap-1.5 pt-2.5 border-t border-slate-100">
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-blue-600 hover:text-blue-800 py-1.5 rounded-lg hover:bg-blue-50 transition-colors" onclick="event.stopPropagation()">查看</button>
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-slate-500 hover:text-slate-700 py-1.5 rounded-lg hover:bg-slate-100 transition-colors" onclick="event.stopPropagation()">关联</button>
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-slate-500 hover:text-slate-700 py-1.5 rounded-lg hover:bg-slate-100 transition-colors flex items-center justify-center gap-1" onclick="event.stopPropagation()"><svg style="width:11px;height:11px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>下载</button>
+            </div>
+          </div>
+
+          <!-- Card 6 -->
+          <div class="result-card" onclick="selectCard(this, 5)">
+            <div class="flex items-start justify-between mb-3">
+              <div class="fi-icon fi-pdf">PDF</div>
+              <div class="flex items-center gap-1.5">
+                <span class="type-tag type-sop">SOP</span>
+                <input type="checkbox" class="w-3.5 h-3.5 rounded accent-blue-600" onclick="event.stopPropagation()">
+              </div>
+            </div>
+            <p class="text-sm font-bold text-slate-800 leading-snug mb-1">项目实施SOP v1.2.pdf</p>
+            <p class="text-xs text-slate-400 mb-2.5">项目管理规范化</p>
+            <div class="space-y-1 mb-3 text-xs text-slate-500">
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>TSK-202505-002</div>
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>赵磊 · v1.2</div>
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>2025-05-09 17:20</div>
+            </div>
+            <div class="flex items-center gap-1 mb-3"><span class="use-tag use-internal">内部使用</span><span class="use-tag use-product">产品材料</span></div>
+            <div class="flex items-center gap-1.5 pt-2.5 border-t border-slate-100">
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-blue-600 hover:text-blue-800 py-1.5 rounded-lg hover:bg-blue-50 transition-colors" onclick="event.stopPropagation()">查看</button>
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-slate-500 hover:text-slate-700 py-1.5 rounded-lg hover:bg-slate-100 transition-colors" onclick="event.stopPropagation()">关联</button>
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-slate-500 hover:text-slate-700 py-1.5 rounded-lg hover:bg-slate-100 transition-colors flex items-center justify-center gap-1" onclick="event.stopPropagation()"><svg style="width:11px;height:11px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>下载</button>
+            </div>
+          </div>
+
+          <!-- Card 7 -->
+          <div class="result-card" onclick="selectCard(this, 6)">
+            <div class="flex items-start justify-between mb-3">
+              <div class="fi-icon fi-word">W</div>
+              <div class="flex items-center gap-1.5">
+                <span class="type-tag type-doc">文档</span>
+                <input type="checkbox" class="w-3.5 h-3.5 rounded accent-blue-600" onclick="event.stopPropagation()">
+              </div>
+            </div>
+            <p class="text-sm font-bold text-slate-800 leading-snug mb-1">客户培训手册 v1.0.docx</p>
+            <p class="text-xs text-slate-400 mb-2.5">客户成功体系</p>
+            <div class="space-y-1 mb-3 text-xs text-slate-500">
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>TSK-202505-001</div>
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>孙悦 · v1.0</div>
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>2025-05-08 16:10</div>
+            </div>
+            <div class="flex items-center gap-1 mb-3"><span class="use-tag use-customer">客户交付</span><span class="use-tag use-product">产品材料</span></div>
+            <div class="flex items-center gap-1.5 pt-2.5 border-t border-slate-100">
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-blue-600 hover:text-blue-800 py-1.5 rounded-lg hover:bg-blue-50 transition-colors" onclick="event.stopPropagation()">查看</button>
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-slate-500 hover:text-slate-700 py-1.5 rounded-lg hover:bg-slate-100 transition-colors" onclick="event.stopPropagation()">关联</button>
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-slate-500 hover:text-slate-700 py-1.5 rounded-lg hover:bg-slate-100 transition-colors flex items-center justify-center gap-1" onclick="event.stopPropagation()"><svg style="width:11px;height:11px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>下载</button>
+            </div>
+          </div>
+
+          <!-- Card 8 -->
+          <div class="result-card" onclick="selectCard(this, 7)">
+            <div class="flex items-start justify-between mb-3">
+              <div class="fi-icon fi-ppt">P</div>
+              <div class="flex items-center gap-1.5">
+                <span class="type-tag type-moban">模板</span>
+                <input type="checkbox" class="w-3.5 h-3.5 rounded accent-blue-600" onclick="event.stopPropagation()">
+              </div>
+            </div>
+            <p class="text-sm font-bold text-slate-800 leading-snug mb-1">演示材料（对外版）.pptx</p>
+            <p class="text-xs text-slate-400 mb-2.5">市场与品牌</p>
+            <div class="space-y-1 mb-3 text-xs text-slate-500">
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>TSK-202505-004</div>
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>周航 · v1.1</div>
+              <div class="flex items-center gap-1.5"><svg style="width:11px;height:11px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>2025-05-07 14:35</div>
+            </div>
+            <div class="flex items-center gap-1 mb-3"><span class="use-tag use-product">产品材料</span><span class="use-tag use-customer">客户交付</span></div>
+            <div class="flex items-center gap-1.5 pt-2.5 border-t border-slate-100">
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-blue-600 hover:text-blue-800 py-1.5 rounded-lg hover:bg-blue-50 transition-colors" onclick="event.stopPropagation()">查看</button>
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-slate-500 hover:text-slate-700 py-1.5 rounded-lg hover:bg-slate-100 transition-colors" onclick="event.stopPropagation()">关联</button>
+              <button class="cursor-pointer flex-1 text-xs font-semibold text-slate-500 hover:text-slate-700 py-1.5 rounded-lg hover:bg-slate-100 transition-colors flex items-center justify-center gap-1" onclick="event.stopPropagation()"><svg style="width:11px;height:11px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>下载</button>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Pagination -->
+        <div class="flex items-center justify-between mt-4">
+          <span class="text-xs text-slate-400">共 218 条</span>
+          <div class="flex items-center gap-1">
+            <button class="cursor-pointer w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:bg-white hover:shadow-sm disabled:opacity-30 transition-all" disabled><svg style="width:12px;height:12px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg></button>
+            <button class="cursor-pointer w-7 h-7 rounded-lg text-white text-xs font-bold" style="background:#0369A1">1</button>
+            <button class="cursor-pointer w-7 h-7 rounded-lg text-slate-500 text-xs font-medium hover:bg-white hover:shadow-sm transition-all">2</button>
+            <button class="cursor-pointer w-7 h-7 rounded-lg text-slate-500 text-xs font-medium hover:bg-white hover:shadow-sm transition-all">3</button>
+            <button class="cursor-pointer w-7 h-7 rounded-lg text-slate-500 text-xs font-medium hover:bg-white hover:shadow-sm transition-all">4</button>
+            <button class="cursor-pointer w-7 h-7 rounded-lg text-slate-500 text-xs font-medium hover:bg-white hover:shadow-sm transition-all">5</button>
+            <span class="text-slate-300 px-1">···</span>
+            <button class="cursor-pointer w-7 h-7 rounded-lg text-slate-500 text-xs font-medium hover:bg-white hover:shadow-sm transition-all">22</button>
+            <button class="cursor-pointer w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:bg-white hover:shadow-sm transition-all"><svg style="width:12px;height:12px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg></button>
+          </div>
+          <select class="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white text-slate-500 cursor-pointer focus:outline-none">
+            <option>10 条/页</option><option>20 条/页</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 最近更新记录 -->
+      <div class="card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-sm font-bold text-slate-800">最近更新记录</h2>
+          <a href="#" class="text-xs text-blue-500 hover:text-blue-700 font-medium cursor-pointer">查看更多 →</a>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs">
+            <thead>
+              <tr class="border-b border-slate-100">
+                <th class="text-left text-slate-400 font-semibold pb-2.5 pr-4">更新时间</th>
+                <th class="text-left text-slate-400 font-semibold pb-2.5 pr-4">成果名称</th>
+                <th class="text-left text-slate-400 font-semibold pb-2.5 pr-4">成果类型</th>
+                <th class="text-left text-slate-400 font-semibold pb-2.5 pr-4">所属专项</th>
+                <th class="text-left text-slate-400 font-semibold pb-2.5 pr-4">版本</th>
+                <th class="text-left text-slate-400 font-semibold pb-2.5 pr-4">负责人</th>
+                <th class="text-left text-slate-400 font-semibold pb-2.5 pr-4">更新内容摘要</th>
+                <th class="text-left text-slate-400 font-semibold pb-2.5">复用范围</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-50">
+              <tr>
+                <td class="py-2.5 pr-4 text-slate-500 font-medium">2025-05-15 16:42</td>
+                <td class="py-2.5 pr-4 font-semibold text-blue-600 cursor-pointer hover:text-blue-800">智能客服解决方案 v2.0</td>
+                <td class="py-2.5 pr-4"><span class="type-tag type-fangan">方案</span></td>
+                <td class="py-2.5 pr-4 text-slate-500">智能客服AI化</td>
+                <td class="py-2.5 pr-4 text-slate-600 font-medium">v2.0</td>
+                <td class="py-2.5 pr-4"><div class="flex items-center gap-1.5"><div style="width:18px;height:18px;border-radius:50%;background:#2563EB;color:white;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center">李</div>李明</div></td>
+                <td class="py-2.5 pr-4 text-slate-500">优化知识召回策略，补充落地实施步骤与评估指标</td>
+                <td class="py-2.5"><div class="flex items-center gap-1"><span class="use-tag use-internal">内部使用</span><span class="use-tag use-project">项目复用</span></div></td>
+              </tr>
+              <tr>
+                <td class="py-2.5 pr-4 text-slate-500 font-medium">2025-05-13 15:18</td>
+                <td class="py-2.5 pr-4 font-semibold text-blue-600 cursor-pointer hover:text-blue-800">知识库构建模板.pptx</td>
+                <td class="py-2.5 pr-4"><span class="type-tag type-moban">模板</span></td>
+                <td class="py-2.5 pr-4 text-slate-500">知识库平台化</td>
+                <td class="py-2.5 pr-4 text-slate-600 font-medium">v1.3</td>
+                <td class="py-2.5 pr-4"><div class="flex items-center gap-1.5"><div style="width:18px;height:18px;border-radius:50%;background:#8B5CF6;color:white;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center">王</div>王雪</div></td>
+                <td class="py-2.5 pr-4 text-slate-500">新增模板使用说明，完善字段示例与校验规则</td>
+                <td class="py-2.5"><div class="flex items-center gap-1"><span class="use-tag use-project">项目复用</span><span class="use-tag use-product">产品材料</span></div></td>
+              </tr>
+              <tr>
+                <td class="py-2.5 pr-4 text-slate-500 font-medium">2025-05-12 11:30</td>
+                <td class="py-2.5 pr-4 font-semibold text-blue-600 cursor-pointer hover:text-blue-800">FAQ知识清单.xlsx</td>
+                <td class="py-2.5 pr-4"><span class="type-tag type-sop">SOP</span></td>
+                <td class="py-2.5 pr-4 text-slate-500">智能客服AI化</td>
+                <td class="py-2.5 pr-4 text-slate-600 font-medium">v1.1</td>
+                <td class="py-2.5 pr-4"><div class="flex items-center gap-1.5"><div style="width:18px;height:18px;border-radius:50%;background:#059669;color:white;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center">张</div>张伟</div></td>
+                <td class="py-2.5 pr-4 text-slate-500">更新高频问题分类，补充问题来源与优先级标签</td>
+                <td class="py-2.5"><div class="flex items-center gap-1"><span class="use-tag use-internal">内部使用</span><span class="use-tag use-customer">客户交付</span></div></td>
+              </tr>
+              <tr>
+                <td class="py-2.5 pr-4 text-slate-500 font-medium">2025-05-11 09:25</td>
+                <td class="py-2.5 pr-4 font-semibold text-blue-600 cursor-pointer hover:text-blue-800">产品需求澄清 Prompt v1.0</td>
+                <td class="py-2.5 pr-4"><span class="type-tag type-prompt">Prompt</span></td>
+                <td class="py-2.5 pr-4 text-slate-500">需求管理优化</td>
+                <td class="py-2.5 pr-4 text-slate-600 font-medium">v1.0</td>
+                <td class="py-2.5 pr-4"><div class="flex items-center gap-1.5"><div style="width:18px;height:18px;border-radius:50%;background:#F59E0B;color:white;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center">陈</div>陈晨</div></td>
+                <td class="py-2.5 pr-4 text-slate-500">增加澄清维度与示例，优化输出格式与提示语</td>
+                <td class="py-2.5"><div class="flex items-center gap-1"><span class="use-tag use-internal">内部使用</span><span class="use-tag use-project">项目复用</span></div></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Right: Detail Panel ── -->
+    <div style="width:300px;flex-shrink:0;border-left:1px solid #E9EFF6;background:#fff;display:flex;flex-direction:column;overflow:hidden" class="slide-in" id="detailPanel">
+      <div class="flex items-center justify-between px-4 py-3.5 border-b flex-shrink-0" style="border-color:#E9EFF6">
+        <h2 class="text-sm font-bold text-slate-800">成果详情</h2>
+        <div class="flex items-center gap-1.5">
+          <button class="cursor-pointer p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-blue-600 transition-colors" title="编辑">
+            <svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+          </button>
+          <button class="cursor-pointer p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors" title="关闭">
+            <svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="flex-1 overflow-y-auto px-4 py-4 space-y-5">
+        <!-- Title block -->
+        <div class="flex items-start gap-3">
+          <div class="fi-icon fi-word flex-shrink-0" style="width:44px;height:44px;border-radius:12px;font-size:15px">W</div>
+          <div>
+            <p class="text-sm font-bold text-slate-800 leading-snug">智能客服解决方案 v2.0</p>
+            <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
+              <span class="type-tag type-fangan">方案</span>
+              <span class="use-tag use-internal">内部使用</span>
+              <span class="use-tag use-project">项目复用</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- File link -->
+        <div>
+          <p class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">文件链接</p>
+          <div class="flex items-center gap-2 p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+            <svg style="width:13px;height:13px;color:#0369A1;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+            <span class="text-xs text-blue-600 truncate flex-1">/assets/docs/zhineng-kefu-v2.0.docx</span>
+            <button class="cursor-pointer text-slate-400 hover:text-slate-600 flex-shrink-0">
+              <svg style="width:13px;height:13px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- 适用场景 -->
+        <div>
+          <p class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">适用场景</p>
+          <p class="text-xs text-slate-600 leading-relaxed p-3 rounded-lg bg-slate-50 border border-slate-100">适用于企业级智能客服系统建设与优化，覆盖知识库建设、对话流程、机器人能力、数据闭环等场景。</p>
+        </div>
+
+        <!-- 版本记录 -->
+        <div>
+          <p class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">版本记录</p>
+          <div class="rounded-xl overflow-hidden border border-slate-100">
+            <div class="ver-row px-3 bg-blue-50">
+              <div>
+                <span class="text-xs font-bold text-blue-700">v2.0</span>
+                <span class="text-xs text-blue-500 ml-1.5 px-1.5 py-0.5 rounded-full bg-blue-100 font-semibold">当前</span>
+              </div>
+              <div class="text-right">
+                <p class="text-xs text-slate-500">2025-05-15 16:42</p>
+                <p class="text-xs text-slate-400">李明</p>
+              </div>
+            </div>
+            <div class="ver-row px-3">
+              <span class="text-xs font-medium text-slate-600">v1.1</span>
+              <div class="text-right">
+                <p class="text-xs text-slate-500">2025-05-08 11:20</p>
+                <p class="text-xs text-slate-400">李明</p>
+              </div>
+            </div>
+            <div class="ver-row px-3">
+              <span class="text-xs font-medium text-slate-600">v1.0</span>
+              <div class="text-right">
+                <p class="text-xs text-slate-500">2025-04-30 17:05</p>
+                <p class="text-xs text-slate-400">李明</p>
+              </div>
+            </div>
+          </div>
+          <a href="#" class="text-xs text-blue-500 hover:text-blue-700 font-medium cursor-pointer mt-1.5 block">查看更多 →</a>
+        </div>
+
+        <!-- 关联任务 -->
+        <div>
+          <p class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">关联任务</p>
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between p-2.5 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer border border-slate-100">
+              <span class="text-xs text-blue-600 font-medium">TSK-202505-017</span>
+              <span class="text-xs text-slate-500">知识库平台化</span>
+            </div>
+            <div class="flex items-center justify-between p-2.5 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer border border-slate-100">
+              <span class="text-xs text-blue-600 font-medium">TSK-202505-021</span>
+              <span class="text-xs text-slate-500">智能客服能力升级</span>
+            </div>
+          </div>
+          <a href="#" class="text-xs text-blue-500 hover:text-blue-700 font-medium cursor-pointer mt-1.5 block">查看更多 →</a>
+        </div>
+
+        <!-- 备注 -->
+        <div>
+          <p class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">备注</p>
+          <p class="text-xs text-slate-600 leading-relaxed p-3 rounded-lg bg-amber-50 border border-amber-100">综合试点项目反馈，优化知识召回策略与意图识别效果，补充落地实施步骤与评估方法。</p>
+        </div>
+      </div>
+
+      <!-- Footer actions -->
+      <div class="px-4 py-3 border-t flex gap-2 flex-shrink-0" style="border-color:#E9EFF6">
+        <button class="cursor-pointer flex-1 py-2 rounded-lg text-white text-xs font-bold transition-all hover:opacity-90" style="background:linear-gradient(135deg,#0369A1,#0EA5E9)">
+          <svg style="width:12px;height:12px;display:inline;margin-right:4px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>下载文件
+        </button>
+        <button class="cursor-pointer flex-1 py-2 rounded-lg border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50 transition-colors">
+          关联任务
+        </button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+function selectCard(card, idx) {
+  document.querySelectorAll('.result-card').forEach(c => c.classList.remove('selected'));
+  card.classList.add('selected');
+}
+</script>
+</body>
+</html>

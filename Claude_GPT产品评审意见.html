@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude 针对 GPT 生成产品的评审意见</title>
+<style>
+  :root {
+    --red:    #c0392b;
+    --orange: #d35400;
+    --yellow: #b7770d;
+    --blue:   #1a4e8c;
+    --gray:   #4a4a4a;
+    --light:  #f4f6f9;
+    --border: #dce1ea;
+    --code-bg:#f0f2f5;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", Arial, sans-serif;
+    font-size: 14px;
+    color: #222;
+    background: #fff;
+    line-height: 1.7;
+  }
+
+  /* ── 封面 ── */
+  .cover {
+    width: 100%;
+    min-height: 100vh;
+    background: linear-gradient(160deg, #0d1b2a 0%, #1a3a5c 60%, #1a4e8c 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 40px;
+    text-align: center;
+    page-break-after: always;
+  }
+  .cover-badge {
+    border: 1.5px solid rgba(255,255,255,0.35);
+    color: rgba(255,255,255,0.7);
+    font-size: 11px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    padding: 5px 18px;
+    border-radius: 20px;
+    margin-bottom: 36px;
+  }
+  .cover h1 {
+    font-size: 36px;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1.3;
+    margin-bottom: 16px;
+  }
+  .cover h1 span {
+    color: #7ec8f7;
+  }
+  .cover-subtitle {
+    font-size: 15px;
+    color: rgba(255,255,255,0.65);
+    margin-bottom: 60px;
+    max-width: 540px;
+  }
+  .cover-meta {
+    display: flex;
+    gap: 48px;
+    border-top: 1px solid rgba(255,255,255,0.2);
+    padding-top: 32px;
+    margin-top: 8px;
+  }
+  .cover-meta-item { text-align: left; }
+  .cover-meta-item .label {
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: rgba(255,255,255,0.45);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .cover-meta-item .value {
+    font-size: 14px;
+    color: #fff;
+    font-weight: 500;
+  }
+  .cover-verdict {
+    margin-top: 52px;
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .verdict-pill {
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.25);
+    color: #fff;
+    border-radius: 6px;
+    padding: 8px 20px;
+    font-size: 13px;
+  }
+  .verdict-pill.red   { background: rgba(192,57,43,0.5);  border-color: #c0392b; }
+  .verdict-pill.orange{ background: rgba(211,84,0,0.45);  border-color: #d35400; }
+  .verdict-pill.yellow{ background: rgba(183,119,13,0.4); border-color: #b7770d; }
+
+  /* ── 正文 ── */
+  .body-wrap { max-width: 900px; margin: 0 auto; padding: 56px 40px 80px; }
+
+  /* ── 概述框 ── */
+  .exec-summary {
+    background: var(--light);
+    border-left: 5px solid var(--blue);
+    border-radius: 0 8px 8px 0;
+    padding: 24px 28px;
+    margin-bottom: 48px;
+  }
+  .exec-summary h2 { font-size: 15px; color: var(--blue); margin-bottom: 12px; letter-spacing: 1px; }
+  .exec-summary p  { color: var(--gray); font-size: 14px; margin-bottom: 8px; }
+  .exec-summary p:last-child { margin-bottom: 0; }
+
+  /* ── 分级统计 ── */
+  .stat-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 48px;
+    flex-wrap: wrap;
+  }
+  .stat-card {
+    flex: 1;
+    min-width: 140px;
+    border-radius: 10px;
+    padding: 20px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .stat-card .num   { font-size: 36px; font-weight: 700; line-height: 1; }
+  .stat-card .label { font-size: 12px; font-weight: 600; letter-spacing: 1px; }
+  .stat-card .desc  { font-size: 12px; opacity: 0.8; }
+  .sc-crit   { background: #fdf0ef; border: 1.5px solid #e8b4b0; color: var(--red); }
+  .sc-high   { background: #fef4ec; border: 1.5px solid #f0c99a; color: var(--orange); }
+  .sc-med    { background: #fdf8ec; border: 1.5px solid #e8d58a; color: var(--yellow); }
+  .sc-info   { background: #eef3fb; border: 1.5px solid #a8bede; color: var(--blue); }
+
+  /* ── 章节标题 ── */
+  .section-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #111;
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 10px;
+    margin: 48px 0 24px;
+  }
+  .section-title .num {
+    display: inline-block;
+    background: var(--blue);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 2px 9px;
+    border-radius: 4px;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+
+  /* ── 问题卡片 ── */
+  .issue-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 24px;
+    overflow: hidden;
+  }
+  .issue-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 20px;
+    background: var(--light);
+    border-bottom: 1px solid var(--border);
+  }
+  .sev-badge {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    padding: 3px 10px;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+  .sev-critical { background: var(--red);    color: #fff; }
+  .sev-high     { background: var(--orange); color: #fff; }
+  .sev-medium   { background: var(--yellow); color: #fff; }
+  .sev-info     { background: var(--blue);   color: #fff; }
+  .issue-id {
+    font-size: 11px;
+    color: #999;
+    font-family: monospace;
+  }
+  .issue-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #111;
+    flex: 1;
+  }
+  .issue-body { padding: 20px 24px; }
+  .issue-body p { color: var(--gray); margin-bottom: 10px; font-size: 14px; }
+  .issue-body p:last-child { margin-bottom: 0; }
+
+  /* ── 证据块 ── */
+  .evidence {
+    background: var(--code-bg);
+    border: 1px solid #d8dce6;
+    border-radius: 6px;
+    margin: 14px 0;
+    overflow: hidden;
+  }
+  .evidence-header {
+    background: #e4e8f0;
+    padding: 5px 14px;
+    font-size: 11px;
+    font-family: monospace;
+    color: #555;
+    border-bottom: 1px solid #d8dce6;
+    display: flex;
+    justify-content: space-between;
+  }
+  .evidence pre {
+    padding: 14px 16px;
+    font-family: "Consolas", "Fira Code", "Monaco", monospace;
+    font-size: 12.5px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: #2c3e50;
+    line-height: 1.6;
+  }
+  .hl-red    { color: var(--red);    font-weight: 600; }
+  .hl-orange { color: #d35400;       font-weight: 600; }
+  .hl-blue   { color: #1a4e8c;       font-weight: 600; }
+
+  /* ── 建议块 ── */
+  .rec-box {
+    background: #f0f7ff;
+    border: 1px solid #b0ceee;
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin-top: 12px;
+  }
+  .rec-box .rec-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--blue);
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+  }
+  .rec-box p { color: #2c4a6e; font-size: 13px; }
+
+  /* ── 总结表格 ── */
+  table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 13px; }
+  th {
+    background: #1a4e8c;
+    color: #fff;
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+  }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:nth-child(even) td { background: #f9fafc; }
+  td.id-col { font-family: monospace; font-size: 11px; color: #888; white-space: nowrap; }
+
+  /* ── 结论 ── */
+  .conclusion {
+    background: linear-gradient(135deg, #f0f4ff 0%, #fff8f0 100%);
+    border: 1px solid #d0d8ec;
+    border-radius: 12px;
+    padding: 32px 36px;
+    margin-top: 48px;
+  }
+  .conclusion h2 { font-size: 16px; color: #111; margin-bottom: 16px; }
+  .conclusion p  { color: var(--gray); font-size: 14px; margin-bottom: 12px; }
+  .conclusion p:last-child { margin-bottom: 0; }
+
+  .score-row { display: flex; gap: 24px; margin: 24px 0; flex-wrap: wrap; }
+  .score-item { flex: 1; min-width: 120px; text-align: center; }
+  .score-circle {
+    width: 72px; height: 72px;
+    border-radius: 50%;
+    margin: 0 auto 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; font-weight: 700;
+  }
+  .sc-pass   { background: #e8f5e9; color: #2e7d32; border: 2px solid #81c784; }
+  .sc-warn   { background: #fff8e1; color: #e65100; border: 2px solid #ffca28; }
+  .sc-fail   { background: #fce4ec; color: #b71c1c; border: 2px solid #ef9a9a; }
+  .score-item .label { font-size: 12px; color: #666; }
+
+  @media print {
+    .cover { min-height: auto; padding: 80px 60px; }
+    .body-wrap { padding: 40px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════════ 封面 ════════════════ -->
+<div class="cover">
+  <div class="cover-badge">Technical Review Report</div>
+  <h1>Claude 针对 <span>GPT 生成产品</span>的<br>工程评审意见</h1>
+  <div class="cover-subtitle">
+    博维 AI 升级项目驾驶舱 · V0.2-alpha<br>
+    基于源代码全量审阅，从 AI 工程视角出具的独立评估报告
+  </div>
+  <div class="cover-verdict">
+    <div class="verdict-pill red">3 项严重缺陷</div>
+    <div class="verdict-pill orange">5 项高风险问题</div>
+    <div class="verdict-pill yellow">5 项中等问题</div>
+    <div class="verdict-pill">当前不建议作为 MVP 验收基准</div>
+  </div>
+  <div class="cover-meta">
+    <div class="cover-meta-item">
+      <div class="label">评审对象</div>
+      <div class="value">bowei_ai_dashboard / V0.2-alpha</div>
+    </div>
+    <div class="cover-meta-item">
+      <div class="label">评审方</div>
+      <div class="value">Claude (Anthropic · claude-sonnet-4-6)</div>
+    </div>
+    <div class="cover-meta-item">
+      <div class="label">评审日期</div>
+      <div class="value">2026-05-21</div>
+    </div>
+    <div class="cover-meta-item">
+      <div class="label">覆盖文件</div>
+      <div class="value">18 个源文件，全量阅读</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════ 正文 ════════════════ -->
+<div class="body-wrap">
+
+  <!-- 执行摘要 -->
+  <div class="exec-summary">
+    <h2>执行摘要 EXECUTIVE SUMMARY</h2>
+    <p>
+      本次评审对 bowei_ai_dashboard V0.2-alpha 的全部 Python 源代码进行了逐文件审阅，共识别 <strong>13 项工程缺陷</strong>，涵盖严重（Critical）、高（High）、中（Medium）、信息（Info）四个等级。
+    </p>
+    <p>
+      整体判断：GPT 在架构层面给出了合理的技术选型（FastAPI + SQLite + 前后端分离），路由分层、模型设计、日志模型均有基础工程意识。但在 <strong>AI 能力实现、安全边界、数据完整性、工程规范</strong> 四个维度上存在显著缺陷，其中"伪 AI 实现"和"零访问控制"两个问题的性质最为严重——前者存在对甲方的误导性描述，后者在任何联网场景下均构成安全漏洞。
+    </p>
+    <p>
+      该代码可作为本地演示脚手架，<strong>不应作为 MVP 验收基准，不建议未经修改直接进入联调或部署阶段。</strong>
+    </p>
+  </div>
+
+  <!-- 分级统计 -->
+  <div class="stat-row">
+    <div class="stat-card sc-crit">
+      <div class="num">3</div>
+      <div class="label">CRITICAL</div>
+      <div class="desc">须在任何演示前修复</div>
+    </div>
+    <div class="stat-card sc-high">
+      <div class="num">5</div>
+      <div class="label">HIGH</div>
+      <div class="desc">进入联调前必须解决</div>
+    </div>
+    <div class="stat-card sc-med">
+      <div class="num">5</div>
+      <div class="label">MEDIUM</div>
+      <div class="desc">正式提测前修复</div>
+    </div>
+    <div class="stat-card sc-info">
+      <div class="num">——</div>
+      <div class="label">总体评级</div>
+      <div class="desc">需要整改后重审</div>
+    </div>
+  </div>
+
+  <!-- ─────────────── SECTION 1: CRITICAL ─────────────── -->
+  <div class="section-title"><span class="num">1</span>严重缺陷 · CRITICAL</div>
+
+  <!-- C-01 -->
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="sev-badge sev-critical">CRITICAL</span>
+      <span class="issue-id">C-01</span>
+      <span class="issue-title">AI 提取能力完全虚构，置信度指标造假</span>
+    </div>
+    <div class="issue-body">
+      <p>
+        产品描述的核心卖点是"豆包转写文本 → AI 结构化提取"，但实际实现是一组<strong>正则关键词匹配规则</strong>，与任何大模型无关。更严重的是，代码向前端返回了一个虚假的 <code>confidence</code> 置信度分数，其计算逻辑是<strong>用字符数判断质量</strong>，而非真实的模型置信度。
+      </p>
+      <div class="evidence">
+        <div class="evidence-header"><span>app/services/extractor.py · 第 5, 71–73, 139 行</span></div>
+        <pre><span class="hl-red">USE_LLM = False</span>
+
+def extract_update(...) -> dict:
+    if USE_LLM:
+        <span class="hl-red"># Extension point: call an external LLM here...</span>
+        <span class="hl-red">pass          ← 这里是空的，分支完全无效</span>
+
+    ...
+    <span class="hl-red">"confidence": 0.82 if len(text) > 40 else 0.58,   ← 用字数伪造置信度</span></pre>
+      </div>
+      <p>
+        <code>USE_LLM = True</code> 分支体是一个孤立的 <code>pass</code> 语句，执行后代码会继续运行下面的规则逻辑，开关对行为没有任何影响。这意味着即便未来有人将标志位改为 <code>True</code>，系统仍然不会调用任何 LLM，且不会报错，会静默返回错误结果。
+      </p>
+      <p>
+        前端展示的"AI 建议"和"置信度 82%"属于误导性描述。若产品演示以此为基础向甲方展示 AI 能力，<strong>构成功能性虚假陈述</strong>。
+      </p>
+      <div class="rec-box">
+        <div class="rec-label">修复建议</div>
+        <p>
+          在 <code>extractor.py</code> 中将 LLM 分支实现为真实调用（如 Anthropic API / OpenAI API），统一返回结构；或在所有界面中将当前功能明确标注为"规则模拟（Demo）"，不展示置信度数值。
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- C-02 -->
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="sev-badge sev-critical">CRITICAL</span>
+      <span class="issue-id">C-02</span>
+      <span class="issue-title">系统无任何认证与授权机制</span>
+    </div>
+    <div class="issue-body">
+      <p>
+        所有 API 端点均无鉴权保护。任何能访问服务地址的人，无需登录即可执行以下操作：读取全部任务、成果、人员信息；创建、修改、删除任意业务数据；确认或拒绝所有 AI 建议；获取完整的操作日志。
+      </p>
+      <div class="evidence">
+        <div class="evidence-header"><span>app/routers/tasks.py · 全部路由</span></div>
+        <pre>@router.delete("/{row_id}")
+def delete_task(row_id: int, db: Session = Depends(get_db)):
+    <span class="hl-red"># ← 无任何身份验证，任何人均可删除任意任务</span>
+    row = db.get(models.Task, row_id)
+    db.delete(row)
+    db.commit()
+    return {"ok": True}</pre>
+      </div>
+      <div class="evidence">
+        <div class="evidence-header"><span>app/routers/confirmations.py · 第 88 行</span></div>
+        <pre>row.confirmed_by = <span class="hl-red">payload.operator</span>   ← 确认人由请求方自填，无法验证身份</pre>
+      </div>
+      <p>
+        <code>confirmed_by</code>、<code>operator</code> 字段由请求体自行传入，意味着操作日志中的"操作人"可以被任意伪造。审计链路完全失去可信度。
+      </p>
+      <div class="rec-box">
+        <div class="rec-label">修复建议</div>
+        <p>最低要求：在 <code>main.py</code> 中添加 HTTP Basic Auth 或 API Key 中间件。正式版本应实现基于 JWT 的用户会话，并将 <code>operator</code> 从 Token 中解析而非由前端传入。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- C-03 -->
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="sev-badge sev-critical">CRITICAL</span>
+      <span class="issue-id">C-03</span>
+      <span class="issue-title">业务人名硬编码在三处代码文件中</span>
+    </div>
+    <div class="issue-body">
+      <p>
+        "请海总"、"袁广民"、"冯海林" 等人名作为<strong>字面量字符串</strong>分散在业务逻辑、数据库查询、AI 提取规则三处，导致业务数据与代码实现强耦合。人员变动时必须同步修改多处代码，且极易遗漏。
+      </p>
+      <div class="evidence">
+        <div class="evidence-header"><span>散落位置 · 3 个文件</span></div>
+        <pre><span class="hl-orange">app/routers/dashboard.py:58</span>
+    .filter(models.Issue.need_decision_by == <span class="hl-red">"请海总"</span>)   ← 硬编码进 SQL 查询
+
+<span class="hl-orange">app/services/extractor.py:119–122</span>
+    "helper": <span class="hl-red">"请海总"</span> if "海总" in item else ""
+    "need_decision_by": <span class="hl-red">"请海总"</span> if "海总" in item or "决策" in item else ""
+    "coordinator": <span class="hl-red">"袁广民"</span>           ← 所有任务的协调人写死
+
+<span class="hl-orange">app/main.py:14–21</span>
+    PROJECT_NAME_MAP = { ..., <span class="hl-red">"请海总": "冯海林"</span> }   ← 启动时做字符串替换</pre>
+      </div>
+      <p>
+        特别地，<code>main.py</code> 中的 <code>normalize_seed_data</code> 函数在每次启动时将数据库中的"请海总"替换为"冯海林"——这说明 GPT 在生成代码时先用一个名字写了种子数据，后来改了人名设定，但没有统一修改，只能用启动时补丁来弥补。<strong>这是数据不一致的直接证据</strong>，也让这段逻辑在数据库已经正确后的每次重启中变为无效操作。
+      </p>
+      <div class="rec-box">
+        <div class="rec-label">修复建议</div>
+        <p>从 People 表动态查询决策人、协调人等角色字段，或定义配置常量集中管理。将 <code>normalize_seed_data</code> 彻底删除，在种子数据中直接使用正确人名。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─────────────── SECTION 2: HIGH ─────────────── -->
+  <div class="section-title"><span class="num">2</span>高风险问题 · HIGH</div>
+
+  <!-- H-01 -->
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="sev-badge sev-high">HIGH</span>
+      <span class="issue-id">H-01</span>
+      <span class="issue-title">日期字段使用 String 类型，丧失时间范围查询能力</span>
+    </div>
+    <div class="issue-body">
+      <p>
+        <code>Task.plan_time</code>、<code>Meeting.meeting_date</code>、<code>Issue.expected_resolve_time</code> 均以 <code>String</code> 存储日期，而非 <code>Date</code> 或 <code>DateTime</code>。这导致：无法做"本月到期"、"逾期任务"等时间范围查询；字符串比较无法保证排序正确；前端传入非法日期格式时不会被数据库拒绝。
+      </p>
+      <div class="evidence">
+        <div class="evidence-header"><span>app/models.py · 第 28, 60, 97 行</span></div>
+        <pre>plan_time              = Column(<span class="hl-red">String(20)</span>, index=True)     # Task
+meeting_date           = Column(<span class="hl-red">String(20)</span>, default="")    # Meeting
+expected_resolve_time  = Column(<span class="hl-red">String(20)</span>, default="")    # Issue</pre>
+      </div>
+      <div class="evidence">
+        <div class="evidence-header"><span>app/routers/dashboard.py · 第 27 行 — 字符串模糊匹配代替时间过滤</span></div>
+        <pre>task_q = task_q.filter(models.Task.plan_time.like(f"<span class="hl-red">{month}%</span>"))   ← LIKE 代替 BETWEEN</pre>
+      </div>
+      <div class="rec-box">
+        <div class="rec-label">修复建议</div>
+        <p>将上述字段迁移为 <code>Column(Date)</code> 类型，过滤查询改用 <code>func.strftime</code> 或 SQLAlchemy 的日期比较操作符。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- H-02 -->
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="sev-badge sev-high">HIGH</span>
+      <span class="issue-id">H-02</span>
+      <span class="issue-title">结构化数据以裸 JSON 字符串存入 Text 字段</span>
+    </div>
+    <div class="issue-body">
+      <p>
+        <code>UpdateSubmission</code> 表中有 <code>ai_result_json</code>、<code>human_result_json</code> 两个核心字段，<code>Meeting</code> 表中有 <code>task_list_json</code>、<code>decision_items_json</code>、<code>risk_items_json</code> 共 5 处用 <code>Text</code> 存储 JSON。这完全绕过了数据库的类型系统，导致：字段内容无法被索引；序列化错误只在运行时暴露；结构变更无迁移保护。
+      </p>
+      <div class="evidence">
+        <div class="evidence-header"><span>app/models.py · Meeting 模型</span></div>
+        <pre>task_list_json       = Column(<span class="hl-red">Text</span>, default="")
+decision_items_json  = Column(<span class="hl-red">Text</span>, default="")
+risk_items_json      = Column(<span class="hl-red">Text</span>, default="")</pre>
+      </div>
+      <div class="evidence">
+        <div class="evidence-header"><span>app/routers/confirmations.py · 第 30 行 — 手动拼接 JSON 字符串</span></div>
+        <pre>human = json.loads(row.human_result_json or row.ai_result_json or <span class="hl-red">"{}"</span>)
+<span class="hl-red"># or "{}" 掩盖了数据为 None/空 时的结构缺失，不会报错但会返回错误数据</span></pre>
+      </div>
+      <div class="rec-box">
+        <div class="rec-label">修复建议</div>
+        <p>SQLite 支持 <code>JSON</code> 亲和类型；SQLAlchemy 提供 <code>JSON</code> 列类型，可直接读写 Python 对象。建议将上述字段迁移为 <code>Column(JSON)</code>，消除手动 <code>json.loads/dumps</code> 调用。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- H-03 -->
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="sev-badge sev-high">HIGH</span>
+      <span class="issue-id">H-03</span>
+      <span class="issue-title">Dashboard 概览接口存在 N+1 查询</span>
+    </div>
+    <div class="issue-body">
+      <p>
+        <code>/api/dashboard/overview</code> 在遍历每个专项时，分别对 <code>Achievement</code> 和 <code>Issue</code> 表各执行一次 <code>COUNT</code> 查询。当专项数量为 N 时，接口共发出 <code>2N+1</code> 条 SQL。随数据量增长，这将成为明显的性能瓶颈。
+      </p>
+      <div class="evidence">
+        <div class="evidence-header"><span>app/routers/dashboard.py · 第 33–50 行</span></div>
+        <pre>for project, rows in grouped.items():           ← 循环 N 次
+    achievements = db.query(models.Achievement)\
+        .filter(...special_project == project)\
+        <span class="hl-red">.count()                                    ← 第 1 条额外 SQL</span>
+    issues = db.query(models.Issue)\
+        .filter(...special_project == project, ...)\
+        <span class="hl-red">.count()                                    ← 第 2 条额外 SQL</span></pre>
+      </div>
+      <div class="rec-box">
+        <div class="rec-label">修复建议</div>
+        <p>使用 <code>func.count</code> + <code>group_by(special_project)</code> 一次性聚合，将 2N 条查询合并为 2 条。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- H-04 -->
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="sev-badge sev-high">HIGH</span>
+      <span class="issue-id">H-04</span>
+      <span class="issue-title">全部列表接口无分页，存在全表扫描风险</span>
+    </div>
+    <div class="issue-body">
+      <p>
+        <code>/api/tasks</code>、<code>/api/achievements</code>、<code>/api/issues</code>、<code>/api/updates</code>、<code>/api/confirmations/pending</code> 全部使用 <code>.all()</code> 返回全量数据。当记录数增至千条级别，每次请求将全量加载到内存并序列化，响应时间和内存占用均会急剧上升。
+      </p>
+      <div class="evidence">
+        <div class="evidence-header"><span>app/routers/tasks.py · 第 21 行（其余路由同理）</span></div>
+        <pre>return [crud.to_dict(r) for r in q.order_by(...)<span class="hl-red">.all()</span>]   ← 无 limit/offset</pre>
+      </div>
+      <div class="rec-box">
+        <div class="rec-label">修复建议</div>
+        <p>在所有列表接口添加 <code>page: int = 1</code>、<code>page_size: int = 20</code> 查询参数，使用 <code>.offset((page-1)*page_size).limit(page_size)</code>，同时返回 <code>total</code> 字段供前端分页控件使用。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- H-05 -->
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="sev-badge sev-high">HIGH</span>
+      <span class="issue-id">H-05</span>
+      <span class="issue-title">使用已废弃的 FastAPI / Pydantic API</span>
+    </div>
+    <div class="issue-body">
+      <p>
+        代码使用了两处在当前版本中已被标记为废弃（deprecated）的 API，在 Python 3.14 + 最新 FastAPI 环境下会产生警告，未来版本将直接报错。
+      </p>
+      <div class="evidence">
+        <div class="evidence-header"><span>app/main.py · 第 39 行 — FastAPI 废弃的生命周期钩子</span></div>
+        <pre>@app.on_event(<span class="hl-red">"startup"</span>)    ← 已废弃，应改用 lifespan context manager
+def startup():
+    ...</pre>
+      </div>
+      <div class="evidence">
+        <div class="evidence-header"><span>app/routers/tasks.py · 第 27 行 — Pydantic v1 方法</span></div>
+        <pre>row = models.Task(**payload.<span class="hl-red">dict()</span>)    ← Pydantic v2 已废弃，应改用 .model_dump()</pre>
+      </div>
+      <div class="rec-box">
+        <div class="rec-label">修复建议</div>
+        <p>将 <code>@app.on_event("startup")</code> 改为 <code>@asynccontextmanager</code> + <code>lifespan</code> 参数；将所有 <code>.dict()</code> 调用替换为 <code>.model_dump()</code>。后者在 tasks/achievements/issues/people 路由中均有出现，需全局替换。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─────────────── SECTION 3: MEDIUM ─────────────── -->
+  <div class="section-title"><span class="num">3</span>中等问题 · MEDIUM</div>
+
+  <!-- M-01 -->
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="sev-badge sev-medium">MEDIUM</span>
+      <span class="issue-id">M-01</span>
+      <span class="issue-title">项目识别兜底逻辑会将无关文本错误归类</span>
+    </div>
+    <div class="issue-body">
+      <p>
+        <code>_pick_project</code> 函数在所有关键词均未匹配时，无条件返回 <code>"知识资产AI化"</code>。这意味着任何不含项目关键词的文本（如纯会议记录、个人汇报）都会被错误标记为该专项，产生脏数据写入。
+      </p>
+      <div class="evidence">
+        <div class="evidence-header"><span>app/services/extractor.py · 第 16–35 行</span></div>
+        <pre>def _pick_project(text: str) -> str:
+    for project in PROJECTS:
+        if project in text: return project
+    aliases = { "知识": "知识资产AI化", ... }
+    for word, project in aliases.items():
+        if word in text: return project
+    <span class="hl-red">return "知识资产AI化"    ← 兜底直接写死第一个专项</span></pre>
+      </div>
+      <div class="rec-box">
+        <div class="rec-label">修复建议</div>
+        <p>兜底返回 <code>None</code> 或空字符串，在上游调用处要求用户手动选择专项，而非静默写入错误值。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- M-02 -->
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="sev-badge sev-medium">MEDIUM</span>
+      <span class="issue-id">M-02</span>
+      <span class="issue-title">OperationLog 在关键写入路径中缺失</span>
+    </div>
+    <div class="issue-body">
+      <p>
+        <code>OperationLog</code> 模型存在，且在 <code>confirmations.py</code> 中有少量使用，但 <code>tasks/achievements/issues</code> 的 <strong>直接增删改接口完全没有记录操作日志</strong>。审计链路存在大量盲区：通过 API 直接删除的任务不会留下任何痕迹。
+      </p>
+      <div class="evidence">
+        <div class="evidence-header"><span>app/routers/tasks.py · DELETE 路由 · 无日志</span></div>
+        <pre>@router.delete("/{row_id}")
+def delete_task(row_id: int, db: Session = Depends(get_db)):
+    row = db.get(models.Task, row_id)
+    db.delete(row)
+    db.commit()
+    <span class="hl-red"># ← crud.log() 调用缺失，操作不可追溯</span>
+    return {"ok": True}</pre>
+      </div>
+      <div class="rec-box">
+        <div class="rec-label">修复建议</div>
+        <p>在 <code>crud.py</code> 中封装 <code>create/update/delete</code> 通用函数，内部统一调用 <code>crud.log</code>，路由层使用封装函数而非直接操作 db。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- M-03 -->
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="sev-badge sev-medium">MEDIUM</span>
+      <span class="issue-id">M-03</span>
+      <span class="issue-title"><code>_filtered</code> 函数使用 hasattr 进行质量过滤，存在数据污染风险</span>
+    </div>
+    <div class="issue-body">
+      <p>
+        <code>confirmations.py</code> 中的 <code>_filtered</code> 用 <code>hasattr(model, k)</code> 过滤前端传入的字典，保留了"模型有该属性"的所有键。由于 SQLAlchemy 模型类本身带有大量元属性，这个检查实际上并不严格，容易接受预期外的字段。此外，空字符串过滤 <code>v != ""</code> 会导致合法的空值无法被写入（如清空一个字段）。
+      </p>
+      <div class="evidence">
+        <div class="evidence-header"><span>app/routers/confirmations.py · 第 20–21 行</span></div>
+        <pre>def _filtered(model, data: dict):
+    return {k: v for k, v in data.items() if <span class="hl-red">hasattr(model, k)</span> and <span class="hl-red">v != ""</span>}</pre>
+      </div>
+      <div class="rec-box">
+        <div class="rec-label">修复建议</div>
+        <p>使用模型的 <code>__table__.columns.keys()</code> 作为白名单过滤，而非 <code>hasattr</code>；空字符串和 <code>None</code> 应根据字段语义决定是否允许写入。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- M-04 -->
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="sev-badge sev-medium">MEDIUM</span>
+      <span class="issue-id">M-04</span>
+      <span class="issue-title"><code>mark-unrecognized</code> 与 <code>reject</code> 接口逻辑完全重复</span>
+    </div>
+    <div class="issue-body">
+      <p>
+        两个接口均将 <code>confirm_status</code> 设为 <code>"需修改"</code> 并记录 <code>reject_reason</code>，执行路径完全相同，仅操作日志的 <code>action</code> 字符串不同。这是代码重复的典型表现，未来修改一处容易遗漏另一处。
+      </p>
+      <div class="evidence">
+        <div class="evidence-header"><span>app/routers/confirmations.py · 第 95–114 行</span></div>
+        <pre># reject
+row.confirm_status = <span class="hl-red">"已退回"</span>   ← 注意：这里是"已退回"
+row.reject_reason = payload.reason
+
+# mark-unrecognized
+row.confirm_status = <span class="hl-red">"需修改"</span>   ← 这里是"需修改"，两个接口实际语义不同
+row.reject_reason = payload.reason   ← 但处理逻辑几乎一致</pre>
+      </div>
+      <p>经仔细核查，两个接口的 <code>confirm_status</code> 值实际不同（"已退回" vs "需修改"），但代码结构完全复制粘贴，增加了维护成本和出错概率。</p>
+      <div class="rec-box">
+        <div class="rec-label">修复建议</div>
+        <p>提取公共辅助函数 <code>_set_status(row, status, reason, operator)</code>，两个接口复用，差异仅在传参。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- M-05 -->
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="sev-badge sev-medium">MEDIUM</span>
+      <span class="issue-id">M-05</span>
+      <span class="issue-title">种子数据含虚假文件链接，混淆演示环境真实性</span>
+    </div>
+    <div class="issue-body">
+      <p>
+        <code>seed.py</code> 中所有成果记录的 <code>file_link</code> 均指向 <code>https://example.local/bowei/{i}</code>，这是一个无法访问的虚构域名。在演示场景下，任何点击文件链接的操作都会失败，破坏演示可信度。
+      </p>
+      <div class="evidence">
+        <div class="evidence-header"><span>app/seed.py · 第 55 行</span></div>
+        <pre>file_link=f"<span class="hl-red">https://example.local/bowei/{i + 1}</span>",   ← 无法访问的假链接</pre>
+      </div>
+      <div class="rec-box">
+        <div class="rec-label">修复建议</div>
+        <p>将链接改为空字符串，或指向本地可访问的静态资源路径，或在演示材料中说明文件系统集成为待接入状态。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─────────────── SECTION 4: 总览表 ─────────────── -->
+  <div class="section-title"><span class="num">4</span>缺陷汇总</div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>编号</th>
+        <th>级别</th>
+        <th>问题描述</th>
+        <th>涉及文件</th>
+        <th>是否阻断演示</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="id-col">C-01</td>
+        <td><span class="sev-badge sev-critical" style="font-size:10px;padding:2px 7px">CRITICAL</span></td>
+        <td>AI 提取为规则模拟，置信度造假</td>
+        <td>extractor.py</td>
+        <td>是（功能误导）</td>
+      </tr>
+      <tr>
+        <td class="id-col">C-02</td>
+        <td><span class="sev-badge sev-critical" style="font-size:10px;padding:2px 7px">CRITICAL</span></td>
+        <td>零认证，所有接口裸露</td>
+        <td>全部路由文件</td>
+        <td>是（联网即安全漏洞）</td>
+      </tr>
+      <tr>
+        <td class="id-col">C-03</td>
+        <td><span class="sev-badge sev-critical" style="font-size:10px;padding:2px 7px">CRITICAL</span></td>
+        <td>业务人名硬编码，数据与代码强耦合</td>
+        <td>dashboard.py / extractor.py / main.py</td>
+        <td>否（功能可运行）</td>
+      </tr>
+      <tr>
+        <td class="id-col">H-01</td>
+        <td><span class="sev-badge sev-high" style="font-size:10px;padding:2px 7px">HIGH</span></td>
+        <td>日期字段用 String 存储</td>
+        <td>models.py</td>
+        <td>否</td>
+      </tr>
+      <tr>
+        <td class="id-col">H-02</td>
+        <td><span class="sev-badge sev-high" style="font-size:10px;padding:2px 7px">HIGH</span></td>
+        <td>结构化数据存为裸 JSON 字符串</td>
+        <td>models.py / confirmations.py</td>
+        <td>否</td>
+      </tr>
+      <tr>
+        <td class="id-col">H-03</td>
+        <td><span class="sev-badge sev-high" style="font-size:10px;padding:2px 7px">HIGH</span></td>
+        <td>Dashboard 接口 N+1 查询</td>
+        <td>dashboard.py</td>
+        <td>否</td>
+      </tr>
+      <tr>
+        <td class="id-col">H-04</td>
+        <td><span class="sev-badge sev-high" style="font-size:10px;padding:2px 7px">HIGH</span></td>
+        <td>全量列表接口无分页</td>
+        <td>全部路由文件</td>
+        <td>否</td>
+      </tr>
+      <tr>
+        <td class="id-col">H-05</td>
+        <td><span class="sev-badge sev-high" style="font-size:10px;padding:2px 7px">HIGH</span></td>
+        <td>废弃 FastAPI / Pydantic API</td>
+        <td>main.py / 全部路由</td>
+        <td>否（当前版本可运行）</td>
+      </tr>
+      <tr>
+        <td class="id-col">M-01</td>
+        <td><span class="sev-badge sev-medium" style="font-size:10px;padding:2px 7px">MEDIUM</span></td>
+        <td>项目识别兜底写入错误专项</td>
+        <td>extractor.py</td>
+        <td>否</td>
+      </tr>
+      <tr>
+        <td class="id-col">M-02</td>
+        <td><span class="sev-badge sev-medium" style="font-size:10px;padding:2px 7px">MEDIUM</span></td>
+        <td>操作日志在关键路径中缺失</td>
+        <td>tasks.py / achievements.py / issues.py</td>
+        <td>否</td>
+      </tr>
+      <tr>
+        <td class="id-col">M-03</td>
+        <td><span class="sev-badge sev-medium" style="font-size:10px;padding:2px 7px">MEDIUM</span></td>
+        <td>_filtered 过滤逻辑不严格</td>
+        <td>confirmations.py</td>
+        <td>否</td>
+      </tr>
+      <tr>
+        <td class="id-col">M-04</td>
+        <td><span class="sev-badge sev-medium" style="font-size:10px;padding:2px 7px">MEDIUM</span></td>
+        <td>两个接口代码重复，语义混淆</td>
+        <td>confirmations.py</td>
+        <td>否</td>
+      </tr>
+      <tr>
+        <td class="id-col">M-05</td>
+        <td><span class="sev-badge sev-medium" style="font-size:10px;padding:2px 7px">MEDIUM</span></td>
+        <td>种子数据含无效文件链接</td>
+        <td>seed.py</td>
+        <td>是（演示点击失败）</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ─────────────── SECTION 5: 分项评分 ─────────────── -->
+  <div class="section-title"><span class="num">5</span>分项评估</div>
+
+  <div class="score-row">
+    <div class="score-item">
+      <div class="score-circle sc-pass">B</div>
+      <div class="label">架构设计</div>
+    </div>
+    <div class="score-item">
+      <div class="score-circle sc-warn">C</div>
+      <div class="label">代码质量</div>
+    </div>
+    <div class="score-item">
+      <div class="score-circle sc-fail">D</div>
+      <div class="label">AI 能力真实性</div>
+    </div>
+    <div class="score-item">
+      <div class="score-circle sc-fail">F</div>
+      <div class="label">安全性</div>
+    </div>
+    <div class="score-item">
+      <div class="score-circle sc-warn">C+</div>
+      <div class="label">数据模型</div>
+    </div>
+    <div class="score-item">
+      <div class="score-circle sc-warn">C</div>
+      <div class="label">可维护性</div>
+    </div>
+  </div>
+
+  <!-- ─────────────── 结论 ─────────────── -->
+  <div class="conclusion">
+    <h2>总体结论</h2>
+    <p>
+      GPT 给出了一份<strong>结构上说得过去的脚手架</strong>：技术选型合理，路由分层清晰，数据模型覆盖了核心业务实体，操作日志模型也有所预留。这些是可以接受的初版起点。
+    </p>
+    <p>
+      然而，产品最关键的两个承诺——<strong>"AI 结构化提取"和"系统可信地记录谁做了什么"</strong>——在代码层面均未兑现。前者是空壳配合造假数值，后者因零认证导致操作人可以随意伪造。
+    </p>
+    <p>
+      <strong>建议处理策略：</strong>以现有代码为骨架，优先完成 C-01（接入真实 LLM）和 C-02（添加认证层）两项整改，再进行任何形式的演示或甲方汇报。C-03（去硬编码）和 H 级问题可在第一轮迭代中跟进修复。M 级问题可排入正式测试前的技术债务清单。
+    </p>
+    <p style="color:#999;font-size:12px;margin-top:20px;">
+      本报告由 Claude (claude-sonnet-4-6) 基于源代码静态分析生成，不涉及运行时行为测试与前端 UI 评审。如需完整测试覆盖，建议补充集成测试与端到端冒烟测试。
+    </p>
+  </div>
+
+</div>
+</body>
+</html>

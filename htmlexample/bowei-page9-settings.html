@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>博维AI驾驶舱 · 系统设置</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; box-sizing: border-box; }
+  body { background: #F1F5F9; }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 99px; }
+
+  .nav-item {
+    display:flex; align-items:center; gap:10px; padding:9px 14px;
+    border-radius:8px; color:#94A3B8; font-size:13.5px; font-weight:500;
+    cursor:pointer; transition:all 0.18s; text-decoration:none;
+    border-left:2px solid transparent;
+  }
+  .nav-item:hover { background:rgba(255,255,255,0.07); color:#E2E8F0; }
+  .nav-item.active { background:rgba(14,165,233,0.15); color:#38BDF8; border-left:2px solid #0EA5E9; }
+  .card { background:#fff; border-radius:14px; border:1px solid #E9EFF6; box-shadow:0 1px 4px rgba(15,23,42,0.06); }
+
+  /* Settings nav (secondary) */
+  .set-nav-item {
+    display:flex; align-items:center; gap:10px; padding:10px 12px;
+    border-radius:10px; font-size:13px; font-weight:500; color:#64748B;
+    cursor:pointer; transition:all 0.15s;
+  }
+  .set-nav-item:hover { background:#F1F5F9; color:#334155; }
+  .set-nav-item.active { background:#EFF6FF; color:#0369A1; font-weight:700; }
+  .set-nav-item.active svg { color:#0369A1; }
+
+  /* Section title */
+  .sec-title { display:flex; align-items:center; gap:8px; }
+  .sec-title::before { content:''; width:3px; height:14px; border-radius:99px; background:#0369A1; }
+
+  /* Form field */
+  .field { padding:16px 0; border-bottom:1px solid #F1F5F9; display:flex; align-items:center; justify-content:space-between; gap:24px; }
+  .field:last-child { border-bottom:none; }
+  .field-info { flex:1; min-width:0; }
+  .field-label { font-size:13px; font-weight:600; color:#1E293B; }
+  .field-desc { font-size:12px; color:#94A3B8; margin-top:3px; line-height:1.5; }
+  .field-control { flex-shrink:0; }
+
+  /* Input */
+  .inp { border:1px solid #E2E8F0; border-radius:9px; padding:8px 12px; font-size:13px; color:#1E293B; background:#fff; transition:all 0.15s; }
+  .inp:focus { outline:none; border-color:#0EA5E9; box-shadow:0 0 0 3px rgba(14,165,233,0.12); }
+
+  /* Toggle */
+  .toggle { position:relative; display:inline-block; width:42px; height:24px; flex-shrink:0; }
+  .toggle input { opacity:0; width:0; height:0; }
+  .toggle-slider { position:absolute; inset:0; border-radius:99px; background:#E2E8F0; cursor:pointer; transition:0.2s; }
+  .toggle-slider::before { content:''; position:absolute; height:18px; width:18px; left:3px; bottom:3px; background:white; border-radius:50%; transition:0.2s; box-shadow:0 1px 3px rgba(0,0,0,0.2); }
+  .toggle input:checked + .toggle-slider { background:#0369A1; }
+  .toggle input:checked + .toggle-slider::before { transform:translateX(18px); }
+
+  /* Segmented control */
+  .seg { display:inline-flex; background:#F1F5F9; border-radius:9px; padding:3px; gap:2px; }
+  .seg-btn { padding:6px 16px; border-radius:7px; font-size:12.5px; font-weight:600; color:#64748B; cursor:pointer; transition:all 0.15s; border:none; background:transparent; }
+  .seg-btn.active { background:#fff; color:#0369A1; box-shadow:0 1px 3px rgba(15,23,42,0.1); }
+
+  /* Theme swatch */
+  .swatch { width:34px; height:34px; border-radius:9px; cursor:pointer; transition:transform 0.15s; border:2px solid transparent; position:relative; }
+  .swatch:hover { transform:scale(1.08); }
+  .swatch.active { border-color:#fff; box-shadow:0 0 0 2px #0369A1; }
+  .swatch.active::after { content:'✓'; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#fff; font-size:14px; font-weight:bold; }
+
+  @keyframes fadeUp { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  .fade-up { animation: fadeUp 0.3s ease both; }
+  @media (prefers-reduced-motion:reduce) { * { animation:none!important; transition:none!important; } }
+</style>
+</head>
+<body class="flex h-screen overflow-hidden">
+
+<!-- ═══════ SIDEBAR ═══════ -->
+<aside class="w-56 flex-shrink-0 flex flex-col overflow-hidden" style="background:#0F172A">
+  <div class="flex items-center gap-3 px-5 h-16 border-b flex-shrink-0" style="border-color:rgba(255,255,255,0.08)">
+    <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background:linear-gradient(135deg,#0EA5E9,#0369A1)">
+      <svg style="width:18px;height:18px;color:white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+    </div>
+    <div>
+      <div class="text-white text-sm font-bold tracking-tight leading-none">博维 AI</div>
+      <div class="text-slate-500 text-xs mt-0.5">升级项目驾驶舱</div>
+    </div>
+  </div>
+  <nav class="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+    <a class="nav-item" href="bowei-page1-dashboard.html"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>首页驾驶舱</a>
+    <a class="nav-item" href="bowei-page2-voice.html"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>语音更新</a>
+    <a class="nav-item" href="bowei-page3-meeting.html"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>会议纪要</a>
+    <a class="nav-item" href="bowei-page4-confirm.html"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>AI 确认中心<span class="ml-auto bg-orange-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none">6</span></a>
+    <a class="nav-item" href="bowei-page5-tasks.html"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>工作推进表</a>
+    <div class="pt-4 pb-1 px-2"><div class="text-slate-600 font-semibold uppercase" style="font-size:10px;letter-spacing:0.1em">资源库</div></div>
+    <a class="nav-item" href="bowei-page6-results.html"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>成果库</a>
+    <a class="nav-item" href="bowei-page7-issues.html"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>问题与决策</a>
+    <a class="nav-item" href="bowei-page8-org.html"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>组织与分工</a>
+    <a class="nav-item active" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      系统设置
+    </a>
+  </nav>
+  <div class="px-4 py-3 border-t flex items-center gap-3 flex-shrink-0" style="border-color:rgba(255,255,255,0.08)">
+    <div class="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0" style="background:linear-gradient(135deg,#3B82F6,#0369A1)">冯</div>
+    <div class="flex-1 min-w-0">
+      <div class="text-white text-sm font-semibold truncate">冯海林</div>
+      <div class="text-slate-500 text-xs truncate">总经理 · 管理员</div>
+    </div>
+  </div>
+</aside>
+
+<!-- ═══════ MAIN ═══════ -->
+<div class="flex-1 flex flex-col overflow-hidden">
+
+  <!-- Top Bar -->
+  <header class="h-16 flex items-center px-6 gap-3 flex-shrink-0 bg-white border-b" style="border-color:#E9EFF6">
+    <div class="flex-1">
+      <h1 class="text-base font-bold text-slate-800">系统设置</h1>
+      <p class="text-xs text-slate-400 mt-0.5">配置平台基础信息、通知、AI 能力、安全与集成</p>
+    </div>
+    <button class="cursor-pointer px-4 py-2 rounded-lg border border-slate-200 text-slate-500 text-sm font-semibold hover:bg-slate-50 transition-colors">取消</button>
+    <button class="cursor-pointer flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-semibold transition-all hover:opacity-90 active:scale-95" style="background:linear-gradient(135deg,#0369A1,#0EA5E9);box-shadow:0 2px 8px rgba(3,105,161,0.25)">
+      <svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+      保存更改
+    </button>
+  </header>
+
+  <!-- Content -->
+  <div class="flex-1 overflow-hidden flex">
+
+    <!-- ── Settings Nav (secondary) ── -->
+    <div class="w-52 flex-shrink-0 bg-white border-r overflow-y-auto p-3" style="border-color:#E9EFF6">
+      <div class="set-nav-item active">
+        <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+        基础信息
+      </div>
+      <div class="set-nav-item">
+        <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+        通知与提醒
+      </div>
+      <div class="set-nav-item">
+        <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+        AI 能力配置
+      </div>
+      <div class="set-nav-item">
+        <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+        安全与权限
+      </div>
+      <div class="set-nav-item">
+        <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+        集成与接口
+      </div>
+      <div class="set-nav-item">
+        <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
+        数据与备份
+      </div>
+      <div class="set-nav-item">
+        <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+        操作日志
+      </div>
+    </div>
+
+    <!-- ── Settings Content ── -->
+    <div class="flex-1 overflow-y-auto p-6 fade-up">
+      <div class="max-w-3xl mx-auto space-y-5">
+
+        <!-- 基础信息 -->
+        <div class="card p-6">
+          <h2 class="sec-title text-sm font-bold text-slate-800 mb-5">平台基础信息</h2>
+
+          <!-- Logo -->
+          <div class="field">
+            <div class="field-info">
+              <p class="field-label">平台标识</p>
+              <p class="field-desc">显示在登录页和侧边栏顶部的 Logo 与名称</p>
+            </div>
+            <div class="field-control flex items-center gap-3">
+              <div class="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style="background:linear-gradient(135deg,#0EA5E9,#0369A1)">
+                <svg style="width:24px;height:24px;color:white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+              </div>
+              <button class="cursor-pointer px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50 transition-colors">更换 Logo</button>
+            </div>
+          </div>
+
+          <!-- Platform name -->
+          <div class="field">
+            <div class="field-info">
+              <p class="field-label">平台名称</p>
+              <p class="field-desc">展示在浏览器标题与系统各处</p>
+            </div>
+            <div class="field-control">
+              <input type="text" class="inp w-72" value="博维AI升级项目驾驶舱" />
+            </div>
+          </div>
+
+          <!-- Language -->
+          <div class="field">
+            <div class="field-info">
+              <p class="field-label">默认语言</p>
+              <p class="field-desc">新成员加入时的默认界面语言</p>
+            </div>
+            <div class="field-control">
+              <div class="seg">
+                <button class="seg-btn active">简体中文</button>
+                <button class="seg-btn">English</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Timezone -->
+          <div class="field">
+            <div class="field-info">
+              <p class="field-label">时区</p>
+              <p class="field-desc">影响所有时间戳与定时任务的执行时间</p>
+            </div>
+            <div class="field-control">
+              <select class="inp w-72 cursor-pointer">
+                <option>（GMT+08:00）北京、上海、香港</option>
+                <option>（GMT+00:00）协调世界时 UTC</option>
+                <option>（GMT-08:00）太平洋时间</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Theme color -->
+          <div class="field">
+            <div class="field-info">
+              <p class="field-label">主题色</p>
+              <p class="field-desc">用于按钮、链接与高亮元素的品牌主色</p>
+            </div>
+            <div class="field-control flex items-center gap-2.5">
+              <div class="swatch active" style="background:#0369A1"></div>
+              <div class="swatch" style="background:#7C3AED"></div>
+              <div class="swatch" style="background:#059669"></div>
+              <div class="swatch" style="background:#DC2626"></div>
+              <div class="swatch" style="background:#D97706"></div>
+              <div class="swatch" style="background:#0F172A"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 通知与提醒 -->
+        <div class="card p-6">
+          <h2 class="sec-title text-sm font-bold text-slate-800 mb-5">通知与提醒</h2>
+
+          <div class="field">
+            <div class="field-info">
+              <p class="field-label">任务延期提醒</p>
+              <p class="field-desc">任务临近或超过计划时间时，向负责人推送提醒</p>
+            </div>
+            <div class="field-control">
+              <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-info">
+              <p class="field-label">AI 待确认提醒</p>
+              <p class="field-desc">AI 提取结果待确认时，每日汇总推送至确认人</p>
+            </div>
+            <div class="field-control">
+              <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-info">
+              <p class="field-label">需决策事项提醒</p>
+              <p class="field-desc">出现需高层决策的问题时，即时通知决策人</p>
+            </div>
+            <div class="field-control">
+              <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-info">
+              <p class="field-label">周报自动汇总</p>
+              <p class="field-desc">每周五 18:00 自动生成项目周报并发送给管理层</p>
+            </div>
+            <div class="field-control">
+              <label class="toggle"><input type="checkbox"><span class="toggle-slider"></span></label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-info">
+              <p class="field-label">通知渠道</p>
+              <p class="field-desc">选择接收系统通知的方式</p>
+            </div>
+            <div class="field-control flex items-center gap-2">
+              <button class="cursor-pointer px-3 py-1.5 rounded-lg border-2 border-blue-200 bg-blue-50 text-blue-700 text-xs font-semibold transition-colors flex items-center gap-1.5">
+                <svg style="width:12px;height:12px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>站内信
+              </button>
+              <button class="cursor-pointer px-3 py-1.5 rounded-lg border-2 border-blue-200 bg-blue-50 text-blue-700 text-xs font-semibold transition-colors flex items-center gap-1.5">
+                <svg style="width:12px;height:12px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>企业微信
+              </button>
+              <button class="cursor-pointer px-3 py-1.5 rounded-lg border border-slate-200 text-slate-500 text-xs font-semibold hover:bg-slate-50 transition-colors">邮件</button>
+              <button class="cursor-pointer px-3 py-1.5 rounded-lg border border-slate-200 text-slate-500 text-xs font-semibold hover:bg-slate-50 transition-colors">短信</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI 能力配置 -->
+        <div class="card p-6">
+          <div class="flex items-center justify-between mb-5">
+            <h2 class="sec-title text-sm font-bold text-slate-800">AI 能力配置</h2>
+            <span class="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full flex items-center gap-1.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>服务正常
+            </span>
+          </div>
+
+          <div class="field">
+            <div class="field-info">
+              <p class="field-label">语音转写引擎</p>
+              <p class="field-desc">用于语音更新与会议录音的转写服务</p>
+            </div>
+            <div class="field-control">
+              <select class="inp w-60 cursor-pointer">
+                <option>讯飞语音（推荐）</option>
+                <option>阿里云语音识别</option>
+                <option>本地 Whisper 模型</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-info">
+              <p class="field-label">大模型服务</p>
+              <p class="field-desc">用于内容提取、摘要生成与智能建议</p>
+            </div>
+            <div class="field-control">
+              <select class="inp w-60 cursor-pointer">
+                <option>内部部署模型</option>
+                <option>第三方 API（需审批）</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-info">
+              <p class="field-label">AI 建议置信度阈值</p>
+              <p class="field-desc">低于该值的提取结果将标记为"待人工复核"</p>
+            </div>
+            <div class="field-control flex items-center gap-3" style="width:280px">
+              <input type="range" min="50" max="95" value="75" class="flex-1 cursor-pointer" style="accent-color:#0369A1" />
+              <span class="text-sm font-bold text-blue-700 w-10 text-right">75%</span>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-info">
+              <p class="field-label">自动写入</p>
+              <p class="field-desc">置信度≥90% 的结果跳过人工确认直接入库</p>
+            </div>
+            <div class="field-control">
+              <label class="toggle"><input type="checkbox"><span class="toggle-slider"></span></label>
+            </div>
+          </div>
+        </div>
+
+        <!-- 安全与权限 -->
+        <div class="card p-6">
+          <h2 class="sec-title text-sm font-bold text-slate-800 mb-5">安全与权限</h2>
+
+          <div class="field">
+            <div class="field-info">
+              <p class="field-label">双因素认证（2FA）</p>
+              <p class="field-desc">要求全员登录时进行二次身份验证</p>
+            </div>
+            <div class="field-control">
+              <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-info">
+              <p class="field-label">登录会话有效期</p>
+              <p class="field-desc">超过该时长未操作将自动登出</p>
+            </div>
+            <div class="field-control">
+              <select class="inp w-40 cursor-pointer">
+                <option>2 小时</option><option>8 小时</option><option>24 小时</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-info">
+              <p class="field-label">操作留痕审计</p>
+              <p class="field-desc">记录所有数据修改、确认与删除操作（不可关闭）</p>
+            </div>
+            <div class="field-control">
+              <label class="toggle"><input type="checkbox" checked disabled><span class="toggle-slider" style="opacity:0.6"></span></label>
+            </div>
+          </div>
+
+          <!-- Danger zone -->
+          <div class="mt-5 pt-5 border-t border-slate-100">
+            <div class="flex items-center justify-between p-4 rounded-xl" style="background:#FEF2F2;border:1px solid #FECACA">
+              <div>
+                <p class="text-sm font-bold text-red-800">清空 AI 缓存数据</p>
+                <p class="text-xs text-red-500 mt-1">将清除所有未确认的 AI 提取暂存结果，此操作不可恢复</p>
+              </div>
+              <button class="cursor-pointer px-4 py-2 rounded-lg bg-white border-2 border-red-200 text-red-600 text-sm font-semibold hover:bg-red-50 transition-colors flex-shrink-0">清空缓存</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

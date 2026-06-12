@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>博维AI驾驶舱 — 系统逻辑文档</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #F8FAFC; color: #1E293B; font-size: 14px; line-height: 1.6; }
+
+  /* Layout */
+  .sidebar { position: fixed; top: 0; left: 0; width: 220px; height: 100vh; background: #1E293B; overflow-y: auto; padding: 24px 0; z-index: 100; }
+  .sidebar-title { color: #94A3B8; font-size: 11px; font-weight: 600; letter-spacing: .08em; padding: 0 20px 12px; }
+  .sidebar a { display: block; color: #CBD5E1; font-size: 13px; padding: 7px 20px; text-decoration: none; border-left: 3px solid transparent; transition: all .15s; }
+  .sidebar a:hover { color: #fff; background: #334155; border-left-color: #6366F1; }
+  .sidebar a.active { color: #fff; background: #334155; border-left-color: #6366F1; }
+  .sidebar .divider { height: 1px; background: #334155; margin: 10px 20px; }
+
+  .main { margin-left: 220px; padding: 40px 48px; max-width: 1100px; }
+
+  /* Sections */
+  .section { margin-bottom: 56px; scroll-margin-top: 24px; }
+  .section-header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+  .section-icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+  .section-title { font-size: 20px; font-weight: 600; color: #0F172A; }
+  .section-sub { font-size: 13px; color: #64748B; margin-top: 2px; }
+
+  /* Cards */
+  .card { background: #fff; border: 1px solid #E2E8F0; border-radius: 12px; padding: 20px 24px; margin-bottom: 16px; }
+  .card-title { font-size: 13px; font-weight: 600; color: #475569; margin-bottom: 12px; text-transform: uppercase; letter-spacing: .05em; }
+
+  /* Grid */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+
+  /* Flow */
+  .flow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .flow-step { background: #F1F5F9; border: 1px solid #CBD5E1; border-radius: 6px; padding: 4px 12px; font-size: 12px; color: #334155; white-space: nowrap; }
+  .flow-arrow { color: #94A3B8; font-size: 12px; }
+  .flow-step.accent { background: #EEF2FF; border-color: #A5B4FC; color: #4338CA; }
+  .flow-step.green { background: #F0FDF4; border-color: #86EFAC; color: #166534; }
+  .flow-step.red { background: #FEF2F2; border-color: #FCA5A5; color: #991B1B; }
+  .flow-step.yellow { background: #FFFBEB; border-color: #FCD34D; color: #92400E; }
+  .flow-step.gray { background: #F8FAFC; border-color: #E2E8F0; color: #64748B; }
+
+  /* Badge */
+  .badge { display: inline-block; font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 999px; }
+  .badge-blue { background: #DBEAFE; color: #1E40AF; }
+  .badge-indigo { background: #EEF2FF; color: #4338CA; }
+  .badge-green { background: #DCFCE7; color: #166534; }
+  .badge-orange { background: #FFF7ED; color: #C2410C; }
+  .badge-red { background: #FEE2E2; color: #991B1B; }
+  .badge-gray { background: #F1F5F9; color: #475569; }
+  .badge-purple { background: #F5F3FF; color: #6D28D9; }
+
+  /* Table */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th { background: #F8FAFC; padding: 8px 12px; text-align: left; font-weight: 600; color: #475569; border-bottom: 1px solid #E2E8F0; font-size: 12px; }
+  tbody td { padding: 8px 12px; border-bottom: 1px solid #F1F5F9; vertical-align: top; color: #334155; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: #F8FAFC; }
+
+  /* Role box */
+  .role-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .role-box { border: 1px solid #E2E8F0; border-radius: 10px; padding: 14px 16px; }
+  .role-name { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+  .role-cap { font-size: 11px; color: #64748B; margin-top: 3px; padding-left: 12px; position: relative; }
+  .role-cap::before { content: "·"; position: absolute; left: 4px; }
+
+  /* API list */
+  .api-item { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; border-bottom: 1px dashed #F1F5F9; font-size: 12px; }
+  .api-item:last-child { border-bottom: none; }
+  .method { font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; flex-shrink: 0; }
+  .get { background: #DBEAFE; color: #1E40AF; }
+  .post { background: #D1FAE5; color: #065F46; }
+  .put { background: #FEF3C7; color: #92400E; }
+  .delete { background: #FEE2E2; color: #991B1B; }
+  .patch { background: #EDE9FE; color: #5B21B6; }
+  .api-path { font-family: "Courier New", monospace; color: #334155; }
+  .api-desc { color: #64748B; margin-left: 4px; }
+
+  /* Status map */
+  .status-map { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+  .status-tag { font-size: 11px; padding: 3px 10px; border-radius: 999px; border: 1px solid; }
+  .status-pending  { background: #FFFBEB; border-color: #FCD34D; color: #92400E; }
+  .status-flowing  { background: #FEF2F2; border-color: #FCA5A5; color: #991B1B; }
+  .status-done     { background: #F0FDF4; border-color: #86EFAC; color: #166534; }
+  .status-neutral  { background: #F8FAFC; border-color: #CBD5E1; color: #64748B; }
+
+  /* DB model */
+  .model-box { border: 1px solid #E2E8F0; border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
+  .model-header { background: #F1F5F9; padding: 8px 14px; font-weight: 600; font-size: 12px; color: #334155; display: flex; align-items: center; gap: 8px; }
+  .model-field { display: flex; align-items: center; gap: 8px; padding: 5px 14px; border-bottom: 1px solid #F8FAFC; font-size: 11px; }
+  .model-field:last-child { border-bottom: none; }
+  .field-name { font-family: monospace; color: #6D28D9; min-width: 160px; }
+  .field-type { color: #0369A1; min-width: 80px; }
+  .field-desc { color: #64748B; }
+
+  /* Hero */
+  .hero { background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); border-radius: 16px; padding: 40px 48px; color: #fff; margin-bottom: 40px; }
+  .hero h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+  .hero p { color: rgba(255,255,255,.8); font-size: 14px; }
+  .hero-chips { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+  .hero-chip { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25); border-radius: 999px; padding: 4px 12px; font-size: 12px; }
+
+  /* Arch */
+  .arch { display: grid; grid-template-columns: 1fr 60px 1fr 60px 1fr; align-items: center; gap: 0; margin: 16px 0; }
+  .arch-box { background: #F8FAFC; border: 1.5px solid #E2E8F0; border-radius: 12px; padding: 16px; text-align: center; }
+  .arch-box h3 { font-size: 13px; font-weight: 600; color: #334155; margin-bottom: 6px; }
+  .arch-box p { font-size: 11px; color: #64748B; }
+  .arch-arrow { text-align: center; color: #94A3B8; font-size: 20px; }
+
+  /* Note */
+  .note { background: #F0F9FF; border-left: 3px solid #38BDF8; border-radius: 0 8px 8px 0; padding: 10px 14px; font-size: 12px; color: #0369A1; margin: 10px 0; }
+  .warn { background: #FFFBEB; border-left: 3px solid #F59E0B; border-radius: 0 8px 8px 0; padding: 10px 14px; font-size: 12px; color: #92400E; margin: 10px 0; }
+
+  h4 { font-size: 13px; font-weight: 600; color: #475569; margin: 14px 0 8px; }
+  p { margin: 6px 0; font-size: 13px; color: #475569; }
+  ul { margin: 6px 0 6px 18px; }
+  li { font-size: 13px; color: #475569; margin: 3px 0; }
+  code { font-family: "Courier New", monospace; background: #F1F5F9; padding: 1px 5px; border-radius: 4px; font-size: 12px; color: #6D28D9; }
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<nav class="sidebar">
+  <div class="sidebar-title">博维AI驾驶舱</div>
+  <a href="#overview">系统总览</a>
+  <a href="#auth">认证与角色</a>
+  <a href="#projects">专项与成员</a>
+  <div class="divider"></div>
+  <a href="#dashboard">首页驾驶舱</a>
+  <a href="#tasks">工作推进表</a>
+  <a href="#subtasks">子任务</a>
+  <a href="#voice">语音更新 / AI提取</a>
+  <a href="#confirm">AI确认中心</a>
+  <div class="divider"></div>
+  <a href="#achievements">成果库</a>
+  <a href="#issues">问题与决策</a>
+  <a href="#meetings">会议纪要</a>
+  <div class="divider"></div>
+  <a href="#models">数据模型</a>
+  <a href="#apis">API 速查</a>
+</nav>
+
+<main class="main">
+
+  <!-- Hero -->
+  <div class="hero">
+    <h1>博维AI驾驶舱 · 系统逻辑文档</h1>
+    <p>React + TypeScript 前端 / FastAPI + SQLite 后端 · 完整模块逻辑说明</p>
+    <div class="hero-chips">
+      <span class="hero-chip">前端 localhost:5173</span>
+      <span class="hero-chip">后端 localhost:8002</span>
+      <span class="hero-chip">SQLite DB</span>
+      <span class="hero-chip">Session Cookie 认证</span>
+    </div>
+  </div>
+
+  <!-- 1. 系统总览 -->
+  <section class="section" id="overview">
+    <div class="section-header">
+      <div class="section-icon" style="background:#EEF2FF">🏗</div>
+      <div>
+        <div class="section-title">系统总览</div>
+        <div class="section-sub">整体架构与模块关系</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">整体架构</div>
+      <div class="arch">
+        <div class="arch-box">
+          <h3>🖥 前端</h3>
+          <p>React 18 + TypeScript</p>
+          <p>Vite + Tailwind CSS</p>
+          <p>React Router v6</p>
+          <p style="margin-top:8px;font-size:11px;color:#6366F1">localhost:5173</p>
+        </div>
+        <div class="arch-arrow">⟷</div>
+        <div class="arch-box">
+          <h3>⚙️ 后端</h3>
+          <p>FastAPI (Python)</p>
+          <p>SQLAlchemy ORM</p>
+          <p>Session Cookie 认证</p>
+          <p style="margin-top:8px;font-size:11px;color:#6366F1">localhost:8002</p>
+        </div>
+        <div class="arch-arrow">⟷</div>
+        <div class="arch-box">
+          <h3>💾 数据库</h3>
+          <p>SQLite</p>
+          <p>bowei_ai_dashboard.db</p>
+          <p>12 张数据表</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">前端路由结构</div>
+      <table>
+        <thead><tr><th>路径</th><th>页面</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td><code>/login</code></td><td>登录页</td><td>账号密码登录，写入 session cookie</td></tr>
+          <tr><td><code>/project/:id</code></td><td>首页驾驶舱</td><td>项目概览、待办角标、快捷导航</td></tr>
+          <tr><td><code>/project/:id/tasks</code></td><td>工作推进表</td><td>主任务 + 子任务树状展示</td></tr>
+          <tr><td><code>/project/:id/submit</code></td><td>语音更新</td><td>语音/文字输入 → AI 解析 → 提交</td></tr>
+          <tr><td><code>/project/:id/confirm</code></td><td>AI 确认中心</td><td>多角色流转审核队列</td></tr>
+          <tr><td><code>/project/:id/achievements</code></td><td>成果库</td><td>项目成果归档与管理</td></tr>
+          <tr><td><code>/project/:id/issues</code></td><td>问题与决策</td><td>风险/问题跟踪</td></tr>
+          <tr><td><code>/project/:id/meeting</code></td><td>会议纪要</td><td>会议记录与 AI 摘要</td></tr>
+          <tr><td><code>/admin/projects</code></td><td>系统管理</td><td>专项管理、成员权限配置（超级管理员）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="card-title">模块数据流向</div>
+      <div class="flow">
+        <span class="flow-step">用户提交更新</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step accent">AI 提取结构化内容</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step yellow">多角色流转审核</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step green">写入工作推进表 / 成果库</span>
+      </div>
+      <div class="flow" style="margin-top:8px">
+        <span class="flow-step">语音/文字</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">UpdateSubmission</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">confirm_status 状态机</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step green">Task / Achievement</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. 认证与角色 -->
+  <section class="section" id="auth">
+    <div class="section-header">
+      <div class="section-icon" style="background:#FEF3C7">🔐</div>
+      <div>
+        <div class="section-title">认证与角色</div>
+        <div class="section-sub">登录机制、全局角色、项目角色</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">登录流程</div>
+      <div class="flow">
+        <span class="flow-step">POST /api/auth/login</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">比对 passwords.json (SHA256)</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step green">写 session cookie</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">中间件校验每次请求</span>
+      </div>
+      <div class="note">session 存于内存 <code>auth_sessions</code> 表，默认 TTL 由 settings 配置；过期 session 在 startup 时清理。未登录 API 请求返回 401，页面请求重定向到 /login。</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">全局系统角色（system_role）</div>
+      <div class="role-grid">
+        <div class="role-box" style="border-color:#FCD34D">
+          <div class="role-name" style="color:#92400E">组长CEO</div>
+          <div class="role-cap">全局查看所有内容</div>
+          <div class="role-cap">可批示所有待CEO决策事项</div>
+          <div class="role-cap">首页显示全局汇总数据</div>
+        </div>
+        <div class="role-box" style="border-color:#A5B4FC">
+          <div class="role-name" style="color:#4338CA">超级管理员</div>
+          <div class="role-cap">全局查看 + 确认</div>
+          <div class="role-cap">可访问 /admin 系统管理</div>
+          <div class="role-cap">管理专项和成员权限</div>
+        </div>
+        <div class="role-box" style="border-color:#6EE7B7">
+          <div class="role-name" style="color:#065F46">过程保障</div>
+          <div class="role-cap">全局查看所有内容</div>
+          <div class="role-cap">可分配提交项给各角色</div>
+          <div class="role-cap">不能自行确认入库</div>
+        </div>
+        <div class="role-box" style="border-color:#E2E8F0">
+          <div class="role-name" style="color:#475569">普通成员</div>
+          <div class="role-cap">仅看自己相关专项</div>
+          <div class="role-cap">权限由项目角色决定</div>
+          <div class="role-cap">自己提交、自己的任务</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">项目内角色（project_members.role）</div>
+      <table>
+        <thead><tr><th>DB 存储键</th><th>展示名</th><th>核心权限</th></tr></thead>
+        <tbody>
+          <tr><td><code>owner</code></td><td>项目负责人</td><td>审核本专项提交、确认入库、查看本专项所有内容</td></tr>
+          <tr><td><code>coordinator</code></td><td>统筹人</td><td>接收流转至统筹人的提交、反馈意见、转交 CEO</td></tr>
+          <tr><td><code>member</code></td><td>协同成员</td><td>提交更新、查看本专项任务和成果</td></tr>
+          <tr><td><code>process_guard</code></td><td>过程保障</td><td>同全局过程保障，项目级绑定</td></tr>
+          <tr><td><code>project_ceo</code></td><td>专项CEO</td><td>专项内 CEO 角色，批示该专项的待决策事项</td></tr>
+        </tbody>
+      </table>
+      <div class="note">角色优先级：owner(4) > coordinator(3) > member/process_guard(2) > project_ceo(1)。同一人可在不同专项有不同角色。</div>
+    </div>
+  </section>
+
+  <!-- 3. 专项与成员 -->
+  <section class="section" id="projects">
+    <div class="section-header">
+      <div class="section-icon" style="background:#ECFDF5">📁</div>
+      <div>
+        <div class="section-title">专项与成员</div>
+        <div class="section-sub">Project / ProjectMember 模块</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">专项 (Project)</div>
+        <p>每个专项对应一个 <code>project</code> 记录，所有任务、成果、问题都归属某个 project_id。</p>
+        <h4>默认专项（permissions.py 初始化）</h4>
+        <ul>
+          <li>知识资产AI化</li>
+          <li>顾问作业AI化</li>
+          <li>交付流程AI化</li>
+          <li>咨询服务产品化</li>
+          <li>技术底座与平台预研</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-title">成员管理</div>
+        <p>成员通过 <code>project_members</code> 表绑定到专项，一人可加入多个专项，且每个专项内角色可不同。</p>
+        <h4>管理入口</h4>
+        <div class="flow" style="flex-direction:column;align-items:flex-start">
+          <span class="flow-step">/admin/projects — 专项管理（超级管理员）</span>
+          <span class="flow-step">/admin/projects/:id/members — 成员角色配置</span>
+        </div>
+        <div class="note">双路径兼容：新表 project_members + 旧字段 projects.owners 字符串（向后兼容）</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">权限判断逻辑（get_user_context_from_db）</div>
+      <p>每个需要权限的 API 都调用此函数，返回当前用户的完整上下文：</p>
+      <table>
+        <thead><tr><th>字段</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td><code>system_role</code></td><td>全局角色（组长CEO / 超级管理员 / 过程保障 / 普通成员）</td></tr>
+          <tr><td><code>project_roles</code></td><td>当前专项内的展示角色列表</td></tr>
+          <tr><td><code>owned_projects</code></td><td>用户作为 owner 的专项名称列表</td></tr>
+          <tr><td><code>coordinated_projects</code></td><td>用户作为 coordinator 的专项名称列表</td></tr>
+          <tr><td><code>is_tech_admin</code></td><td>是否为超级管理员</td></tr>
+          <tr><td><code>is_ceo</code></td><td>是否为组长CEO</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 4. 首页驾驶舱 -->
+  <section class="section" id="dashboard">
+    <div class="section-header">
+      <div class="section-icon" style="background:#EDE9FE">📊</div>
+      <div>
+        <div class="section-title">首页驾驶舱</div>
+        <div class="section-sub">DashboardPage + /api/dashboard/*</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">数据接口</div>
+      <table>
+        <thead><tr><th>接口</th><th>数据内容</th><th>触发条件</th></tr></thead>
+        <tbody>
+          <tr><td><code>GET /api/dashboard/overview</code></td><td>专项概览：任务总数/状态分布/成果数/问题数</td><td>scopeId = 某个专项 ID</td></tr>
+          <tr><td><code>GET /api/dashboard/overview?scopeId=null</code></td><td>全局汇总（所有专项合并）</td><td>CEO/过程保障/超级管理员看全局时</td></tr>
+          <tr><td><code>GET /api/dashboard/role-queue</code></td><td>角标数：待审核/待确认提交数量</td><td>每次进入首页</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="card-title">role-queue 角标计数逻辑（_global_role_queue）</div>
+      <table>
+        <thead><tr><th>用户角色</th><th>计数内容</th><th>过滤范围</th></tr></thead>
+        <tbody>
+          <tr><td>owner（项目负责人）</td><td><span class="badge badge-orange">pending_review</span> — 待审核数量</td><td>仅统计 owned_projects 内的提交</td></tr>
+          <tr><td>coordinator（统筹人）</td><td><span class="badge badge-blue">pending_coordinator</span> — 待统筹数量</td><td>仅统计 coordinated_projects 内的提交</td></tr>
+          <tr><td>CEO</td><td><span class="badge badge-purple">pending_ceo</span> — 待批示数量</td><td>全局所有专项</td></tr>
+          <tr><td>普通成员</td><td><span class="badge badge-gray">my_pending</span> — 我提交的待处理数</td><td>仅本人提交的</td></tr>
+          <tr><td>过程保障/超级管理员</td><td>全局所有活跃提交数</td><td>全局</td></tr>
+        </tbody>
+      </table>
+      <div class="warn">历史 bug（已修复）：owner 和 coordinator 分支之前没有 project_id 过滤，导致角标计数包含其他专项的数据，与 AI 确认中心实际队列数量不符。</div>
+    </div>
+  </section>
+
+  <!-- 5. 工作推进表 -->
+  <section class="section" id="tasks">
+    <div class="section-header">
+      <div class="section-icon" style="background:#F0FDF4">📋</div>
+      <div>
+        <div class="section-title">工作推进表</div>
+        <div class="section-sub">TaskManagementPage + /api/tasks/*</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">任务字段</div>
+        <table>
+          <thead><tr><th>字段</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>key_task</td><td>关键任务（主标题）</td></tr>
+            <tr><td>key_achievement</td><td>关键成果（可点击链接）</td></tr>
+            <tr><td>owner / submitter</td><td>负责人 / 提交人</td></tr>
+            <tr><td>plan_time</td><td>计划时间段</td></tr>
+            <tr><td>status</td><td>未开始/进行中/已完成/延期/暂缓</td></tr>
+            <tr><td>problem_note</td><td>问题备注（有内容则显示"待协调"角标）</td></tr>
+            <tr><td>special_project</td><td>所属专项名（兼容旧数据）</td></tr>
+            <tr><td>project_id</td><td>所属专项 ID（新方式）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <div class="card-title">延期判断逻辑</div>
+        <p>满足以下条件时，计划时间列显示红色：</p>
+        <ul>
+          <li>状态不是"已完成"且不是"暂缓"</li>
+          <li><code>plan_time</code> 中含有"~"（为时间区间格式）</li>
+          <li>结束日期早于今天</li>
+        </ul>
+        <h4>按专项分组展示</h4>
+        <p>同一专项的任务共用左侧 <code>rowSpan</code> 专项列，展开子任务时 rowSpan 动态加大。</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">前端操作权限</div>
+      <table>
+        <thead><tr><th>操作</th><th>允许角色</th></tr></thead>
+        <tbody>
+          <tr><td>查看任务详情（查看按钮）</td><td>所有已登录用户</td></tr>
+          <tr><td>新增任务</td><td>is_tech_admin 或项目内 owner</td></tr>
+          <tr><td>删除任务</td><td>is_tech_admin 或项目内 owner</td></tr>
+          <tr><td>导出表格</td><td>所有已登录用户</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 6. 子任务 -->
+  <section class="section" id="subtasks">
+    <div class="section-header">
+      <div class="section-icon" style="background:#F0F3FF">🌿</div>
+      <div>
+        <div class="section-title">子任务（SubTask）</div>
+        <div class="section-sub">内联展开树 + /api/subtasks/*</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">展开逻辑</div>
+      <div class="flow">
+        <span class="flow-step">点击关键任务行（或左侧箭头）</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step accent">toggleInlineSubTasks()</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">fetchSubTasks(taskId)</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step green">内联插入子任务行</span>
+      </div>
+      <div class="note">子任务行采用 <code>flatMap</code> 展开，每个主任务返回 <code>[taskRow, ...subRows]</code>；rowSpan 动态计算：展开且无子任务时 +1（显示"暂无子任务"占位行），有 N 条子任务时 +N。</div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">视觉设计（方案A）</div>
+        <table>
+          <thead><tr><th>元素</th><th>样式</th></tr></thead>
+          <tbody>
+            <tr><td>父任务展开时背景</td><td style="color:#4338CA"><code>#F5F7FF</code></td></tr>
+            <tr><td>子任务行背景</td><td style="color:#4338CA"><code>#F0F3FF</code></td></tr>
+            <tr><td>子任务行左边树线</td><td><code>2px solid #A5B4FC</code></td></tr>
+            <tr><td>行分隔虚线</td><td><code>1px dashed #E0E7FF</code></td></tr>
+            <tr><td>展开图标</td><td>SVG 箭头，展开时旋转 90°</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <div class="card-title">点击行为规则</div>
+        <ul>
+          <li><strong>点击行任意位置</strong> → 展开/收起子任务</li>
+          <li><strong>点击"查看"按钮</strong> → 仅打开详情面板（e.stopPropagation 阻止行展开）</li>
+          <li><strong>点击"删除"按钮</strong> → 仅触发删除（同样 stopPropagation）</li>
+          <li><strong>点击复选框</strong> → 批量选择（不展开子任务）</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. 语音更新 / AI提取 -->
+  <section class="section" id="voice">
+    <div class="section-header">
+      <div class="section-icon" style="background:#FFF7ED">🎙</div>
+      <div>
+        <div class="section-title">语音更新 / AI 提取</div>
+        <div class="section-sub">VoiceUpdatePage + /api/updates/* + /api/transcribe/*</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">提交流程</div>
+      <div class="flow">
+        <span class="flow-step">录音 或 直接输入文字</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step accent">POST /api/transcribe/whisper</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">转为文字 transcript</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step accent">POST /api/updates</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">AI 提取结构化内容</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step yellow">创建 UpdateSubmission（待确认）</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">UpdateSubmission 字段</div>
+      <table>
+        <thead><tr><th>字段</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td>source_type</td><td><code>voice_update</code> / <code>text_update</code> / <code>personal_update</code></td></tr>
+          <tr><td>transcript_text</td><td>原始文字（语音转写 or 直接输入）</td></tr>
+          <tr><td>ai_result_json</td><td>AI 解析出的结构化 JSON（任务进展、成果、问题等）</td></tr>
+          <tr><td>human_result_json</td><td>人工修改后的内容（优先于 ai_result_json 使用）</td></tr>
+          <tr><td>confirm_status</td><td>当前流转状态（详见 AI 确认中心）</td></tr>
+          <tr><td>confidence</td><td>AI 置信度评分</td></tr>
+          <tr><td>related_task_id</td><td>关联的工作推进表任务 ID</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 8. AI 确认中心 -->
+  <section class="section" id="confirm">
+    <div class="section-header">
+      <div class="section-icon" style="background:#FEF3C7">✅</div>
+      <div>
+        <div class="section-title">AI 确认中心</div>
+        <div class="section-sub">ConfirmPage + /api/confirmations/* — 多角色流转状态机</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">confirm_status 状态分类</div>
+      <h4>待审核 Tab（owner 处理队列）</h4>
+      <div class="status-map">
+        <span class="status-tag status-pending">待确认</span>
+        <span class="status-tag status-pending">待负责人审核</span>
+        <span class="status-tag status-pending">提交人已确认</span>
+        <span class="status-tag status-pending">已重新提交</span>
+        <span class="status-tag status-pending">统筹人已反馈</span>
+        <span class="status-tag status-pending">CEO已批示</span>
+      </div>
+      <h4>流转中 Tab（中间状态）</h4>
+      <div class="status-map">
+        <span class="status-tag status-flowing">需修改</span>
+        <span class="status-tag status-flowing">已打回提交人</span>
+        <span class="status-tag status-flowing">已撤回</span>
+        <span class="status-tag status-flowing">已转交统筹人</span>
+        <span class="status-tag status-flowing">待CEO决策</span>
+      </div>
+      <h4>已完成 Tab（终态）</h4>
+      <div class="status-map">
+        <span class="status-tag status-done">已确认</span>
+        <span class="status-tag status-done">已退回</span>
+        <span class="status-tag status-done">已确认入库</span>
+        <span class="status-tag status-done">已入库</span>
+        <span class="status-tag status-done">不入库</span>
+        <span class="status-tag status-done">已归档</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">流转路径（主要分支）</div>
+      <div class="flow">
+        <span class="flow-step yellow">待确认</span>
+        <span class="flow-arrow">Owner 审核通过 →</span>
+        <span class="flow-step green">已确认入库</span>
+      </div>
+      <div class="flow">
+        <span class="flow-step yellow">待确认</span>
+        <span class="flow-arrow">Owner 打回 →</span>
+        <span class="flow-step red">已打回提交人</span>
+        <span class="flow-arrow">提交人修改重提 →</span>
+        <span class="flow-step yellow">已重新提交</span>
+      </div>
+      <div class="flow">
+        <span class="flow-step yellow">待确认</span>
+        <span class="flow-arrow">转交统筹人 →</span>
+        <span class="flow-step red">已转交统筹人</span>
+        <span class="flow-arrow">统筹人反馈 →</span>
+        <span class="flow-step yellow">统筹人已反馈</span>
+        <span class="flow-arrow">Owner 最终决定 →</span>
+        <span class="flow-step green">已确认入库</span>
+      </div>
+      <div class="flow">
+        <span class="flow-step yellow">待确认</span>
+        <span class="flow-arrow">上报 CEO →</span>
+        <span class="flow-step red">待CEO决策</span>
+        <span class="flow-arrow">CEO 批示 →</span>
+        <span class="flow-step yellow">CEO已批示</span>
+        <span class="flow-arrow">Owner 确认 →</span>
+        <span class="flow-step green">已确认入库</span>
+      </div>
+      <div class="note">确认入库后，AI 结果会同步写入 Task 表（更新 status/problem_note 等字段）或 Achievement 表（创建成果记录）。</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">各角色能访问的内容范围</div>
+      <table>
+        <thead><tr><th>角色</th><th>可见队列</th><th>可执行操作</th></tr></thead>
+        <tbody>
+          <tr><td>owner</td><td>本专项提交（待审核、流转中、已完成）</td><td>确认/打回/转交统筹人/上报CEO</td></tr>
+          <tr><td>coordinator</td><td>被转交给自己的提交</td><td>反馈意见、转交CEO</td></tr>
+          <tr><td>CEO / 超级管理员</td><td>全局所有提交</td><td>批示、查看所有</td></tr>
+          <tr><td>过程保障</td><td>全局所有提交</td><td>分配、查看（不能自行入库）</td></tr>
+          <tr><td>普通成员</td><td>仅自己提交的</td><td>撤回、修改重提</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 9. 成果库 -->
+  <section class="section" id="achievements">
+    <div class="section-header">
+      <div class="section-icon" style="background:#F0FDF4">🏆</div>
+      <div>
+        <div class="section-title">成果库</div>
+        <div class="section-sub">AchievementsPage + /api/achievements/*</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">成果字段</div>
+        <table>
+          <thead><tr><th>字段</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>name</td><td>成果名称</td></tr>
+            <tr><td>achievement_type</td><td>类型（方案/工具/模板/报告等）</td></tr>
+            <tr><td>special_project</td><td>所属专项</td></tr>
+            <tr><td>related_task_id</td><td>关联主任务</td></tr>
+            <tr><td>owner</td><td>负责人</td></tr>
+            <tr><td>version</td><td>版本号（V0.1 起）</td></tr>
+            <tr><td>file_link</td><td>文件链接</td></tr>
+            <tr><td>status</td><td>草稿/已完成/已归档</td></tr>
+            <tr><td>source_type</td><td>人工录入 / AI 确认写入</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <div class="card-title">写入来源</div>
+        <div class="flow" style="flex-direction:column;align-items:flex-start">
+          <span class="flow-step green">方式1：AI 确认入库时自动创建</span>
+          <span class="flow-step" style="margin-top:6px">AI 解析出成果内容 → 确认后写入 achievements 表</span>
+        </div>
+        <div class="flow" style="flex-direction:column;align-items:flex-start;margin-top:12px">
+          <span class="flow-step green">方式2：手动在成果库页面录入</span>
+          <span class="flow-step" style="margin-top:6px">owner 或超级管理员直接创建</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 10. 问题与决策 -->
+  <section class="section" id="issues">
+    <div class="section-header">
+      <div class="section-icon" style="background:#FEF2F2">⚠️</div>
+      <div>
+        <div class="section-title">问题与决策</div>
+        <div class="section-sub">IssuesPage + DecisionPage + /api/issues/*</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">问题字段</div>
+        <table>
+          <thead><tr><th>字段</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>issue_type</td><td>风险 / 待协调 / 卡点</td></tr>
+            <tr><td>description</td><td>问题描述</td></tr>
+            <tr><td>owner</td><td>负责人</td></tr>
+            <tr><td>helper</td><td>协助人</td></tr>
+            <tr><td>priority</td><td>高 / 中 / 低</td></tr>
+            <tr><td>status</td><td>待处理 / 处理中 / 已关闭</td></tr>
+            <tr><td>expected_resolve_time</td><td>预计解决时间</td></tr>
+            <tr><td>source_type</td><td>人工录入 / AI 提取（text_update）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <div class="card-title">问题来源</div>
+        <div class="flow" style="flex-direction:column;align-items:flex-start">
+          <span class="flow-step">AI 提取更新文本中的风险/问题</span>
+          <span class="flow-arrow" style="margin:4px 0">↓</span>
+          <span class="flow-step yellow">写入 issues 表 (source_type=text_update)</span>
+        </div>
+        <div class="flow" style="flex-direction:column;align-items:flex-start;margin-top:12px">
+          <span class="flow-step">工作推进表任务的 problem_note 字段</span>
+          <span class="flow-arrow" style="margin:4px 0">↓</span>
+          <span class="flow-step yellow">任务行显示"待协调"角标（非 Issue 记录）</span>
+        </div>
+        <div class="note" style="margin-top:8px">当前数据库 issues 表已清空（测试数据删除）</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 11. 会议纪要 -->
+  <section class="section" id="meetings">
+    <div class="section-header">
+      <div class="section-icon" style="background:#F0F9FF">📝</div>
+      <div>
+        <div class="section-title">会议纪要</div>
+        <div class="section-sub">MeetingPage + /api/meetings/*</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">会议记录流程</div>
+      <div class="flow">
+        <span class="flow-step">上传音频 / 粘贴文字</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step accent">AI 生成摘要 + 待办事项 + 决策事项 + 风险</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step yellow">Draft 状态存储</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step green">Publish → 正式发布</span>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">Meeting 字段</div>
+        <table>
+          <thead><tr><th>字段</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>title</td><td>会议标题</td></tr>
+            <tr><td>meeting_type</td><td>周会/专项会/其他</td></tr>
+            <tr><td>meeting_date</td><td>会议日期</td></tr>
+            <tr><td>host / participants</td><td>主持人 / 参与人</td></tr>
+            <tr><td>summary</td><td>AI 生成的摘要</td></tr>
+            <tr><td>task_list_json</td><td>AI 提取的待办任务列表</td></tr>
+            <tr><td>decision_items_json</td><td>AI 提取的决策事项</td></tr>
+            <tr><td>risk_items_json</td><td>AI 提取的风险事项</td></tr>
+            <tr><td>publish_status</td><td>draft / published</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <div class="card-title">AI 提取内容结构</div>
+        <p>AI 从会议记录文本中结构化提取：</p>
+        <ul>
+          <li><strong>任务列表</strong>：负责人 + 事项 + 截止时间</li>
+          <li><strong>决策事项</strong>：决策内容 + 决策人</li>
+          <li><strong>风险事项</strong>：风险描述 + 优先级</li>
+          <li><strong>会议摘要</strong>：关键讨论内容概要</li>
+        </ul>
+        <div class="note">提取结果存为 JSON 字段，前端解析展示，可人工修改后发布。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 12. 数据模型 -->
+  <section class="section" id="models">
+    <div class="section-header">
+      <div class="section-icon" style="background:#F5F3FF">🗄</div>
+      <div>
+        <div class="section-title">数据模型</div>
+        <div class="section-sub">12 张核心数据表</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="model-box">
+        <div class="model-header">📋 tasks — 主任务</div>
+        <div class="model-field"><span class="field-name">id</span><span class="field-type">Integer PK</span></div>
+        <div class="model-field"><span class="field-name">project_id</span><span class="field-type">FK→projects</span><span class="field-desc">所属专项</span></div>
+        <div class="model-field"><span class="field-name">key_task</span><span class="field-type">String(200)</span><span class="field-desc">关键任务名称</span></div>
+        <div class="model-field"><span class="field-name">key_achievement</span><span class="field-type">String(200)</span><span class="field-desc">关键成果</span></div>
+        <div class="model-field"><span class="field-name">owner / submitter</span><span class="field-type">String(50)</span><span class="field-desc">负责人/提交人</span></div>
+        <div class="model-field"><span class="field-name">plan_time</span><span class="field-type">String(20)</span><span class="field-desc">计划时间段</span></div>
+        <div class="model-field"><span class="field-name">status</span><span class="field-type">String(20)</span><span class="field-desc">未开始/进行中/已完成/延期/暂缓</span></div>
+        <div class="model-field"><span class="field-name">problem_note</span><span class="field-type">Text</span><span class="field-desc">问题备注</span></div>
+      </div>
+
+      <div class="model-box">
+        <div class="model-header">🌿 subtasks — 子任务</div>
+        <div class="model-field"><span class="field-name">id</span><span class="field-type">Integer PK</span></div>
+        <div class="model-field"><span class="field-name">task_id</span><span class="field-type">FK→tasks</span><span class="field-desc">所属主任务</span></div>
+        <div class="model-field"><span class="field-name">title</span><span class="field-type">String(200)</span><span class="field-desc">子任务标题</span></div>
+        <div class="model-field"><span class="field-name">assignee</span><span class="field-type">String(50)</span><span class="field-desc">负责人</span></div>
+        <div class="model-field"><span class="field-name">plan_time</span><span class="field-type">String(20)</span><span class="field-desc">计划时间</span></div>
+        <div class="model-field"><span class="field-name">status</span><span class="field-type">String(20)</span><span class="field-desc">未开始/进行中/已完成</span></div>
+        <div class="model-field"><span class="field-name">completion_criteria</span><span class="field-type">Text</span><span class="field-desc">完成标准</span></div>
+      </div>
+
+      <div class="model-box">
+        <div class="model-header">📨 update_submissions — AI提交</div>
+        <div class="model-field"><span class="field-name">id</span><span class="field-type">Integer PK</span></div>
+        <div class="model-field"><span class="field-name">project_id</span><span class="field-type">FK→projects</span></div>
+        <div class="model-field"><span class="field-name">source_type</span><span class="field-type">String(40)</span><span class="field-desc">voice_update/text_update/personal_update</span></div>
+        <div class="model-field"><span class="field-name">transcript_text</span><span class="field-type">Text</span><span class="field-desc">原始文字</span></div>
+        <div class="model-field"><span class="field-name">ai_result_json</span><span class="field-type">Text</span><span class="field-desc">AI解析结构化内容</span></div>
+        <div class="model-field"><span class="field-name">human_result_json</span><span class="field-type">Text</span><span class="field-desc">人工修改内容（优先）</span></div>
+        <div class="model-field"><span class="field-name">confirm_status</span><span class="field-type">String(20)</span><span class="field-desc">流转状态</span></div>
+        <div class="model-field"><span class="field-name">related_task_id</span><span class="field-type">FK→tasks</span><span class="field-desc">关联主任务</span></div>
+      </div>
+
+      <div class="model-box">
+        <div class="model-header">🏆 achievements — 成果库</div>
+        <div class="model-field"><span class="field-name">id</span><span class="field-type">Integer PK</span></div>
+        <div class="model-field"><span class="field-name">project_id</span><span class="field-type">FK→projects</span></div>
+        <div class="model-field"><span class="field-name">name</span><span class="field-type">String(200)</span><span class="field-desc">成果名称</span></div>
+        <div class="model-field"><span class="field-name">achievement_type</span><span class="field-type">String(40)</span><span class="field-desc">方案/工具/模板/报告</span></div>
+        <div class="model-field"><span class="field-name">owner</span><span class="field-type">String(50)</span><span class="field-desc">负责人</span></div>
+        <div class="model-field"><span class="field-name">version</span><span class="field-type">String(30)</span><span class="field-desc">V0.1起</span></div>
+        <div class="model-field"><span class="field-name">status</span><span class="field-type">String(20)</span><span class="field-desc">草稿/已完成/已归档</span></div>
+        <div class="model-field"><span class="field-name">source_type</span><span class="field-type">String(40)</span><span class="field-desc">人工录入/AI确认写入</span></div>
+      </div>
+
+      <div class="model-box">
+        <div class="model-header">📁 projects — 专项</div>
+        <div class="model-field"><span class="field-name">id</span><span class="field-type">Integer PK</span></div>
+        <div class="model-field"><span class="field-name">name</span><span class="field-type">String(100) UNIQUE</span><span class="field-desc">专项名称</span></div>
+        <div class="model-field"><span class="field-name">coordinator</span><span class="field-type">String(50)</span><span class="field-desc">统筹人（旧字段兼容）</span></div>
+        <div class="model-field"><span class="field-name">owners</span><span class="field-type">String(200)</span><span class="field-desc">负责人列表（旧字段兼容）</span></div>
+        <div class="model-field"><span class="field-name">sort_order</span><span class="field-type">Integer</span><span class="field-desc">排序权重</span></div>
+        <div class="model-field"><span class="field-name">is_active</span><span class="field-type">Boolean</span><span class="field-desc">是否启用</span></div>
+      </div>
+
+      <div class="model-box">
+        <div class="model-header">👥 project_members — 项目成员</div>
+        <div class="model-field"><span class="field-name">id</span><span class="field-type">Integer PK</span></div>
+        <div class="model-field"><span class="field-name">project_id</span><span class="field-type">FK→projects</span></div>
+        <div class="model-field"><span class="field-name">person_id</span><span class="field-type">FK→people</span></div>
+        <div class="model-field"><span class="field-name">person_name_snapshot</span><span class="field-type">String(50)</span><span class="field-desc">姓名快照（冗余）</span></div>
+        <div class="model-field"><span class="field-name">role</span><span class="field-type">String(30)</span><span class="field-desc">owner/coordinator/member/process_guard/project_ceo</span></div>
+        <div class="model-field"><span class="field-name">UNIQUE</span><span class="field-type">(project_id, person_id, role)</span></div>
+      </div>
+
+      <div class="model-box">
+        <div class="model-header">🙋 people — 人员</div>
+        <div class="model-field"><span class="field-name">id</span><span class="field-type">Integer PK</span></div>
+        <div class="model-field"><span class="field-name">name</span><span class="field-type">String(50)</span></div>
+        <div class="model-field"><span class="field-name">system_role</span><span class="field-type">String(40)</span><span class="field-desc">组长CEO/过程保障/超级管理员/普通成员</span></div>
+        <div class="model-field"><span class="field-name">is_admin</span><span class="field-type">Boolean</span><span class="field-desc">旧字段兼容</span></div>
+        <div class="model-field"><span class="field-name">is_active</span><span class="field-type">Boolean</span></div>
+      </div>
+
+      <div class="model-box">
+        <div class="model-header">⚠️ issues — 问题</div>
+        <div class="model-field"><span class="field-name">id</span><span class="field-type">Integer PK</span></div>
+        <div class="model-field"><span class="field-name">project_id</span><span class="field-type">FK→projects</span></div>
+        <div class="model-field"><span class="field-name">issue_type</span><span class="field-type">String(40)</span><span class="field-desc">风险/待协调/卡点</span></div>
+        <div class="model-field"><span class="field-name">description</span><span class="field-type">Text</span></div>
+        <div class="model-field"><span class="field-name">priority</span><span class="field-type">String(10)</span><span class="field-desc">高/中/低</span></div>
+        <div class="model-field"><span class="field-name">status</span><span class="field-type">String(20)</span><span class="field-desc">待处理/处理中/已关闭</span></div>
+        <div class="model-field"><span class="field-name">source_type</span><span class="field-type">String(40)</span><span class="field-desc">人工录入/text_update</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 13. API 速查 -->
+  <section class="section" id="apis">
+    <div class="section-header">
+      <div class="section-icon" style="background:#F0FDF4">🔌</div>
+      <div>
+        <div class="section-title">API 速查表</div>
+        <div class="section-sub">所有后端接口 · 前缀 /api</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">认证</div>
+        <div class="api-item"><span class="method post">POST</span><span class="api-path">/auth/login</span><span class="api-desc">登录</span></div>
+        <div class="api-item"><span class="method post">POST</span><span class="api-path">/auth/logout</span><span class="api-desc">退出登录</span></div>
+        <div class="api-item"><span class="method get">GET</span><span class="api-path">/auth/me</span><span class="api-desc">当前用户信息</span></div>
+      </div>
+      <div class="card">
+        <div class="card-title">驾驶舱</div>
+        <div class="api-item"><span class="method get">GET</span><span class="api-path">/dashboard/overview</span><span class="api-desc">专项/全局概览统计</span></div>
+        <div class="api-item"><span class="method get">GET</span><span class="api-path">/dashboard/role-queue</span><span class="api-desc">角色待办角标计数</span></div>
+        <div class="api-item"><span class="method get">GET</span><span class="api-path">/dashboard/recent-tasks</span><span class="api-desc">本月重点任务</span></div>
+      </div>
+      <div class="card">
+        <div class="card-title">工作推进表</div>
+        <div class="api-item"><span class="method get">GET</span><span class="api-path">/tasks</span><span class="api-desc">任务列表（按专项过滤）</span></div>
+        <div class="api-item"><span class="method post">POST</span><span class="api-path">/tasks</span><span class="api-desc">新增任务</span></div>
+        <div class="api-item"><span class="method put">PUT</span><span class="api-path">/tasks/{id}</span><span class="api-desc">更新任务</span></div>
+        <div class="api-item"><span class="method delete">DEL</span><span class="api-path">/tasks/{id}</span><span class="api-desc">删除任务</span></div>
+        <div class="api-item"><span class="method get">GET</span><span class="api-path">/subtasks?task_id={id}</span><span class="api-desc">子任务列表</span></div>
+        <div class="api-item"><span class="method post">POST</span><span class="api-path">/subtasks</span><span class="api-desc">新增子任务</span></div>
+        <div class="api-item"><span class="method delete">DEL</span><span class="api-path">/subtasks/{id}</span><span class="api-desc">删除子任务</span></div>
+      </div>
+      <div class="card">
+        <div class="card-title">AI 确认中心</div>
+        <div class="api-item"><span class="method get">GET</span><span class="api-path">/confirmations</span><span class="api-desc">确认队列列表（分 tab）</span></div>
+        <div class="api-item"><span class="method post">POST</span><span class="api-path">/confirmations/{id}/confirm</span><span class="api-desc">确认入库</span></div>
+        <div class="api-item"><span class="method post">POST</span><span class="api-path">/confirmations/{id}/reject</span><span class="api-desc">打回提交人</span></div>
+        <div class="api-item"><span class="method post">POST</span><span class="api-path">/confirmations/{id}/escalate</span><span class="api-desc">上报 CEO</span></div>
+        <div class="api-item"><span class="method post">POST</span><span class="api-path">/confirmations/{id}/transfer</span><span class="api-desc">转交统筹人</span></div>
+        <div class="api-item"><span class="method post">POST</span><span class="api-path">/confirmations/{id}/withdraw</span><span class="api-desc">撤回（提交人）</span></div>
+        <div class="api-item"><span class="method patch">PATCH</span><span class="api-path">/confirmations/{id}</span><span class="api-desc">修改内容并重提</span></div>
+      </div>
+      <div class="card">
+        <div class="card-title">语音更新</div>
+        <div class="api-item"><span class="method post">POST</span><span class="api-path">/updates</span><span class="api-desc">提交文字更新 → AI解析</span></div>
+        <div class="api-item"><span class="method post">POST</span><span class="api-path">/transcribe/whisper</span><span class="api-desc">音频转文字</span></div>
+        <div class="api-item"><span class="method get">GET</span><span class="api-path">/updates/{id}</span><span class="api-desc">获取某次提交详情</span></div>
+      </div>
+      <div class="card">
+        <div class="card-title">其他模块</div>
+        <div class="api-item"><span class="method get">GET</span><span class="api-path">/achievements</span><span class="api-desc">成果库列表</span></div>
+        <div class="api-item"><span class="method post">POST</span><span class="api-path">/achievements</span><span class="api-desc">新增成果</span></div>
+        <div class="api-item"><span class="method get">GET</span><span class="api-path">/issues</span><span class="api-desc">问题列表</span></div>
+        <div class="api-item"><span class="method post">POST</span><span class="api-path">/issues</span><span class="api-desc">新增问题</span></div>
+        <div class="api-item"><span class="method get">GET</span><span class="api-path">/meetings</span><span class="api-desc">会议纪要列表</span></div>
+        <div class="api-item"><span class="method get">GET</span><span class="api-path">/projects</span><span class="api-desc">专项列表</span></div>
+        <div class="api-item"><span class="method get">GET</span><span class="api-path">/people</span><span class="api-desc">人员列表</span></div>
+        <div class="api-item"><span class="method get">GET</span><span class="api-path">/logs</span><span class="api-desc">操作日志</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div style="height:60px"></div>
+</main>
+
+<script>
+  // Sidebar active state on scroll
+  const sections = document.querySelectorAll('.section');
+  const links = document.querySelectorAll('.sidebar a');
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const link = document.querySelector(`.sidebar a[href="#${e.target.id}"]`);
+        if (link) link.classList.add('active');
+      }
+    });
+  }, { threshold: 0.2 });
+  sections.forEach(s => obs.observe(s));
+</script>
+</body>
+</html>

@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>博维AI驾驶舱 · 首页</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; box-sizing: border-box; }
+  body { background: #F1F5F9; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 99px; }
+
+  /* Sidebar */
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 14px;
+    border-radius: 8px; color: #94A3B8; font-size: 13.5px; font-weight: 500;
+    cursor: pointer; transition: all 0.18s; text-decoration: none;
+    border-left: 2px solid transparent;
+  }
+  .nav-item:hover { background: rgba(255,255,255,0.07); color: #E2E8F0; }
+  .nav-item.active {
+    background: rgba(14, 165, 233, 0.15); color: #38BDF8;
+    border-left: 2px solid #0EA5E9;
+  }
+  .nav-item.active svg { color: #38BDF8; }
+
+  /* Card */
+  .card { background: #fff; border-radius: 14px; border: 1px solid #E9EFF6; box-shadow: 0 1px 4px rgba(15,23,42,0.06); }
+
+  /* Stat card hover */
+  .stat-card { transition: transform 0.2s, box-shadow 0.2s; }
+  .stat-card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(15,23,42,0.1); }
+
+  /* Progress bar */
+  .prog-track { height: 7px; background: #EEF2F7; border-radius: 99px; overflow: hidden; }
+  .prog-fill { height: 100%; border-radius: 99px; }
+
+  /* Status badges */
+  .s-inprogress { background:#DBEAFE; color:#1D4ED8; }
+  .s-done       { background:#D1FAE5; color:#065F46; }
+  .s-delayed    { background:#FEE2E2; color:#991B1B; }
+  .s-paused     { background:#FEF3C7; color:#92400E; }
+  .s-notstart   { background:#F1F5F9; color:#475569; }
+  .s-review     { background:#F3E8FF; color:#6B21A8; }
+  .badge { display:inline-flex; align-items:center; padding:2px 9px; border-radius:20px; font-size:11.5px; font-weight:600; white-space:nowrap; }
+
+  /* Risk tag */
+  .risk-high { background:#FEF2F2; color:#DC2626; border:1px solid #FECACA; }
+  .risk-mid  { background:#FFFBEB; color:#D97706; border:1px solid #FDE68A; }
+  .risk-low  { background:#F0FDF4; color:#16A34A; border:1px solid #BBF7D0; }
+  .risk-tag  { display:inline-flex; align-items:center; padding:1px 8px; border-radius:4px; font-size:11px; font-weight:600; }
+
+  /* Table rows */
+  tbody tr { transition: background 0.12s; cursor: default; }
+  tbody tr:hover { background: #F8FAFC; }
+
+  /* Fade in */
+  @keyframes fadeUp { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  .fade-up { animation: fadeUp 0.35s ease both; }
+
+  @media (prefers-reduced-motion: reduce) { * { animation:none!important; transition:none!important; } }
+</style>
+</head>
+<body class="flex h-screen overflow-hidden">
+
+<!-- ═══════ SIDEBAR ═══════ -->
+<aside class="w-56 flex-shrink-0 flex flex-col overflow-hidden" style="background:#0F172A">
+  <!-- Logo -->
+  <div class="flex items-center gap-3 px-5 h-16 border-b border-white/8 flex-shrink-0">
+    <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background:linear-gradient(135deg,#0EA5E9,#0369A1)">
+      <svg class="w-4.5 h-4.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:18px;height:18px">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+      </svg>
+    </div>
+    <div>
+      <div class="text-white text-sm font-bold tracking-tight leading-none">博维 AI</div>
+      <div class="text-slate-500 text-xs mt-0.5">升级项目驾驶舱</div>
+    </div>
+  </div>
+
+  <!-- Nav -->
+  <nav class="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+    <a class="nav-item active" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+      首页驾驶舱
+    </a>
+    <a class="nav-item" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+      语音更新
+    </a>
+    <a class="nav-item" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+      会议纪要
+    </a>
+    <a class="nav-item" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      AI 确认中心
+      <span class="ml-auto bg-orange-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none">6</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+      工作推进表
+    </a>
+
+    <div class="pt-4 pb-1 px-2">
+      <div class="text-xs font-600 uppercase tracking-widest" style="color:#334155;font-size:10px;letter-spacing:0.1em">资源库</div>
+    </div>
+    <a class="nav-item" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
+      成果库
+    </a>
+    <a class="nav-item" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+      问题与决策
+    </a>
+    <a class="nav-item" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      组织与分工
+    </a>
+    <a class="nav-item" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      系统设置
+    </a>
+  </nav>
+
+  <!-- User -->
+  <div class="px-4 py-3 border-t flex items-center gap-3 flex-shrink-0" style="border-color:rgba(255,255,255,0.08)">
+    <div class="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0" style="background:linear-gradient(135deg,#3B82F6,#0369A1)">冯</div>
+    <div class="flex-1 min-w-0">
+      <div class="text-white text-sm font-semibold truncate">冯海林</div>
+      <div class="text-slate-500 text-xs truncate">总经理 · 管理员</div>
+    </div>
+    <button class="cursor-pointer p-1 rounded hover:bg-white/10 transition-colors" title="设置">
+      <svg style="width:14px;height:14px;color:#64748B" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+    </button>
+  </div>
+</aside>
+
+<!-- ═══════ MAIN ═══════ -->
+<div class="flex-1 flex flex-col overflow-hidden">
+
+  <!-- Top Bar -->
+  <header class="h-16 flex items-center px-6 gap-4 flex-shrink-0 bg-white border-b" style="border-color:#E9EFF6">
+    <div class="flex-1">
+      <h1 class="text-base font-bold text-slate-800">首页驾驶舱</h1>
+      <p class="text-xs text-slate-400 mt-0.5">实时掌握五个专项进度、风险、成果与待决策事项</p>
+    </div>
+    <!-- Search -->
+    <div class="relative hidden md:block">
+      <svg class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" style="width:15px;height:15px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+      <input type="text" placeholder="搜索项目、任务、文档…" class="pl-9 pr-4 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition w-64" />
+    </div>
+    <!-- Filters -->
+    <div class="flex items-center gap-2">
+      <select class="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30">
+        <option>全部专项</option><option>知识资产AI化</option><option>顾问作业AI化</option>
+      </select>
+      <select class="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30">
+        <option>2025年5月</option><option>2025年4月</option>
+      </select>
+    </div>
+    <!-- Actions -->
+    <div class="flex items-center gap-2">
+      <button class="cursor-pointer relative p-2 rounded-lg hover:bg-slate-100 transition-colors">
+        <svg style="width:18px;height:18px;color:#64748B" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+        <span class="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
+      </button>
+      <button class="cursor-pointer flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-semibold transition-all hover:opacity-90 active:scale-95" style="background:linear-gradient(135deg,#0369A1,#0EA5E9)">
+        <svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+        导出周报
+      </button>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <main class="flex-1 overflow-y-auto p-6 space-y-5 fade-up">
+
+    <!-- ── STAT CARDS ── -->
+    <div class="grid grid-cols-6 gap-4">
+      <!-- 任务总数 -->
+      <div class="card stat-card p-4 col-span-1">
+        <div class="flex items-start justify-between">
+          <div>
+            <p class="text-xs text-slate-500 font-medium">任务总数</p>
+            <p class="text-3xl font-bold text-slate-800 mt-1.5 leading-none">29</p>
+            <p class="text-xs text-emerald-600 font-medium mt-2 flex items-center gap-1">
+              <svg style="width:12px;height:12px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+              较上周 +3
+            </p>
+          </div>
+          <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style="background:#EFF6FF">
+            <svg style="width:20px;height:20px;color:#2563EB" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- 进行中 -->
+      <div class="card stat-card p-4" style="border-left:3px solid #2563EB">
+        <div class="flex items-start justify-between">
+          <div>
+            <p class="text-xs text-slate-500 font-medium">进行中</p>
+            <p class="text-3xl font-bold text-blue-600 mt-1.5 leading-none">13</p>
+            <p class="text-xs text-slate-400 mt-2">占比 44.8%</p>
+          </div>
+          <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style="background:#DBEAFE">
+            <svg style="width:20px;height:20px;color:#2563EB" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- 已完成 -->
+      <div class="card stat-card p-4" style="border-left:3px solid #059669">
+        <div class="flex items-start justify-between">
+          <div>
+            <p class="text-xs text-slate-500 font-medium">已完成</p>
+            <p class="text-3xl font-bold text-emerald-600 mt-1.5 leading-none">8</p>
+            <p class="text-xs text-slate-400 mt-2">占比 27.6%</p>
+          </div>
+          <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style="background:#D1FAE5">
+            <svg style="width:20px;height:20px;color:#059669" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- 延期 -->
+      <div class="card stat-card p-4" style="border-left:3px solid #DC2626">
+        <div class="flex items-start justify-between">
+          <div>
+            <p class="text-xs text-slate-500 font-medium">延期</p>
+            <p class="text-3xl font-bold text-red-600 mt-1.5 leading-none">4</p>
+            <p class="text-xs text-slate-400 mt-2">占比 13.8%</p>
+          </div>
+          <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style="background:#FEE2E2">
+            <svg style="width:20px;height:20px;color:#DC2626" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- 需决策 -->
+      <div class="card stat-card p-4" style="border-left:3px solid #D97706">
+        <div class="flex items-start justify-between">
+          <div>
+            <p class="text-xs text-slate-500 font-medium">待我决策</p>
+            <p class="text-3xl font-bold text-amber-600 mt-1.5 leading-none">3</p>
+            <p class="text-xs text-amber-500 font-medium mt-2">待处理</p>
+          </div>
+          <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style="background:#FEF3C7">
+            <svg style="width:20px;height:20px;color:#D97706" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- 成果数量 -->
+      <div class="card stat-card p-4" style="border-left:3px solid #7C3AED">
+        <div class="flex items-start justify-between">
+          <div>
+            <p class="text-xs text-slate-500 font-medium">成果数量</p>
+            <p class="text-3xl font-bold text-violet-600 mt-1.5 leading-none">18</p>
+            <p class="text-xs text-emerald-600 font-medium mt-2">本月新增 5</p>
+          </div>
+          <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style="background:#EDE9FE">
+            <svg style="width:20px;height:20px;color:#7C3AED" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── ROW 2: Progress + Donut ── -->
+    <div class="grid grid-cols-5 gap-4">
+
+      <!-- 专项进度总览 -->
+      <div class="card p-5 col-span-3">
+        <div class="flex items-center justify-between mb-5">
+          <h2 class="text-sm font-bold text-slate-800">专项进度总览</h2>
+          <span class="text-xs text-slate-400">更新于 05-16</span>
+        </div>
+        <div class="space-y-4">
+          <!-- Project 1 -->
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <div class="flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full flex-shrink-0" style="background:#2563EB"></div>
+                <span class="text-sm font-medium text-slate-700">知识资产AI化</span>
+              </div>
+              <span class="text-sm font-bold text-slate-700">78%</span>
+            </div>
+            <div class="prog-track">
+              <div class="prog-fill" style="width:78%;background:linear-gradient(90deg,#2563EB,#60A5FA)"></div>
+            </div>
+          </div>
+          <!-- Project 2 -->
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <div class="flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full flex-shrink-0" style="background:#059669"></div>
+                <span class="text-sm font-medium text-slate-700">顾问作业AI化</span>
+              </div>
+              <span class="text-sm font-bold text-slate-700">62%</span>
+            </div>
+            <div class="prog-track">
+              <div class="prog-fill" style="width:62%;background:linear-gradient(90deg,#059669,#34D399)"></div>
+            </div>
+          </div>
+          <!-- Project 3 -->
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <div class="flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full flex-shrink-0" style="background:#F59E0B"></div>
+                <span class="text-sm font-medium text-slate-700">交付流程AI化</span>
+              </div>
+              <span class="text-sm font-bold text-slate-700">55%</span>
+            </div>
+            <div class="prog-track">
+              <div class="prog-fill" style="width:55%;background:linear-gradient(90deg,#F59E0B,#FCD34D)"></div>
+            </div>
+          </div>
+          <!-- Project 4 -->
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <div class="flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full flex-shrink-0" style="background:#8B5CF6"></div>
+                <span class="text-sm font-medium text-slate-700">咨询服务产品化</span>
+              </div>
+              <span class="text-sm font-bold text-slate-700">48%</span>
+            </div>
+            <div class="prog-track">
+              <div class="prog-fill" style="width:48%;background:linear-gradient(90deg,#8B5CF6,#C4B5FD)"></div>
+            </div>
+          </div>
+          <!-- Project 5 -->
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <div class="flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full flex-shrink-0" style="background:#0891B2"></div>
+                <span class="text-sm font-medium text-slate-700">技术底座与平台预研</span>
+              </div>
+              <span class="text-sm font-bold text-slate-700">35%</span>
+            </div>
+            <div class="prog-track">
+              <div class="prog-fill" style="width:35%;background:linear-gradient(90deg,#0891B2,#67E8F9)"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 任务状态分布 -->
+      <div class="card p-5 col-span-2">
+        <h2 class="text-sm font-bold text-slate-800 mb-4">任务状态分布</h2>
+        <div class="flex items-center gap-4">
+          <div style="width:140px;height:140px;flex-shrink:0">
+            <canvas id="donutChart"></canvas>
+          </div>
+          <div class="flex-1 space-y-2.5">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2"><div class="w-2.5 h-2.5 rounded-sm" style="background:#6B7280"></div><span class="text-xs text-slate-600">未启动</span></div>
+              <div class="flex items-center gap-2"><span class="text-xs font-bold text-slate-700">5</span><span class="text-xs text-slate-400">17.2%</span></div>
+            </div>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2"><div class="w-2.5 h-2.5 rounded-sm" style="background:#2563EB"></div><span class="text-xs text-slate-600">进行中</span></div>
+              <div class="flex items-center gap-2"><span class="text-xs font-bold text-slate-700">13</span><span class="text-xs text-slate-400">44.8%</span></div>
+            </div>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2"><div class="w-2.5 h-2.5 rounded-sm" style="background:#059669"></div><span class="text-xs text-slate-600">已完成</span></div>
+              <div class="flex items-center gap-2"><span class="text-xs font-bold text-slate-700">8</span><span class="text-xs text-slate-400">27.6%</span></div>
+            </div>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2"><div class="w-2.5 h-2.5 rounded-sm" style="background:#DC2626"></div><span class="text-xs text-slate-600">延期</span></div>
+              <div class="flex items-center gap-2"><span class="text-xs font-bold text-slate-700">4</span><span class="text-xs text-slate-400">13.8%</span></div>
+            </div>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2"><div class="w-2.5 h-2.5 rounded-sm" style="background:#D97706"></div><span class="text-xs text-slate-600">暂缓</span></div>
+              <div class="flex items-center gap-2"><span class="text-xs font-bold text-slate-700">1</span><span class="text-xs text-slate-400">3.4%</span></div>
+            </div>
+            <div class="pt-1 border-t border-slate-100 flex items-center justify-between">
+              <span class="text-xs text-slate-500 font-medium">合计</span>
+              <span class="text-xs font-bold text-slate-800">29 项</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── ROW 3: 本周重点 + 延期任务 + 决策事项 ── -->
+    <div class="grid grid-cols-3 gap-4">
+
+      <!-- 本周重点 -->
+      <div class="card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-sm font-bold text-slate-800">本周重点</h2>
+          <a href="#" class="text-xs text-blue-500 hover:text-blue-700 font-medium cursor-pointer">查看更多 →</a>
+        </div>
+        <div class="space-y-2.5">
+          <div class="flex items-start gap-3 p-2.5 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
+            <span class="w-5 h-5 rounded-full bg-blue-100 text-blue-600 text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">1</span>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-semibold text-slate-700 leading-snug">知识资产标签体系优化</p>
+              <div class="flex items-center gap-2 mt-1">
+                <span class="text-xs text-slate-400">李明 · 05-16</span>
+                <span class="badge s-inprogress">进行中</span>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-start gap-3 p-2.5 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
+            <span class="w-5 h-5 rounded-full bg-blue-100 text-blue-600 text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">2</span>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-semibold text-slate-700 leading-snug">顾问作业助手内测与反馈</p>
+              <div class="flex items-center gap-2 mt-1">
+                <span class="text-xs text-slate-400">王雪 · 05-17</span>
+                <span class="badge s-inprogress">进行中</span>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-start gap-3 p-2.5 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
+            <span class="w-5 h-5 rounded-full bg-blue-100 text-blue-600 text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">3</span>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-semibold text-slate-700 leading-snug">交付流程自动化方案评审</p>
+              <div class="flex items-center gap-2 mt-1">
+                <span class="text-xs text-slate-400">张伟 · 05-16</span>
+                <span class="badge s-review">待评审</span>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-start gap-3 p-2.5 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
+            <span class="w-5 h-5 rounded-full bg-blue-100 text-blue-600 text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">4</span>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-semibold text-slate-700 leading-snug">咨询产品定价模型验证</p>
+              <div class="flex items-center gap-2 mt-1">
+                <span class="text-xs text-slate-400">陈晨 · 05-18</span>
+                <span class="badge s-inprogress">进行中</span>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-start gap-3 p-2.5 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
+            <span class="w-5 h-5 rounded-full bg-blue-100 text-blue-600 text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">5</span>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-semibold text-slate-700 leading-snug">平台权限体系梳理</p>
+              <div class="flex items-center gap-2 mt-1">
+                <span class="text-xs text-slate-400">刘洋 · 05-20</span>
+                <span class="badge s-notstart">未启动</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 延期任务 -->
+      <div class="card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+            延期任务
+            <span class="w-5 h-5 rounded-full bg-red-100 text-red-600 text-xs font-bold flex items-center justify-center">4</span>
+          </h2>
+          <a href="#" class="text-xs text-blue-500 hover:text-blue-700 font-medium cursor-pointer">查看更多 →</a>
+        </div>
+        <div class="space-y-2.5">
+          <div class="flex items-start gap-3 p-2.5 rounded-lg bg-red-50/60 border border-red-100 cursor-pointer hover:bg-red-50 transition-colors">
+            <div class="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <svg style="width:14px;height:14px;color:#DC2626" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-semibold text-slate-700 truncate">知识图谱构建规范落地</p>
+              <p class="text-xs text-slate-400 mt-0.5">知识资产AI化 · 李明</p>
+            </div>
+            <span class="text-xs font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded-full flex-shrink-0">5天</span>
+          </div>
+          <div class="flex items-start gap-3 p-2.5 rounded-lg bg-red-50/60 border border-red-100 cursor-pointer hover:bg-red-50 transition-colors">
+            <div class="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <svg style="width:14px;height:14px;color:#DC2626" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-semibold text-slate-700 truncate">交付流程自动化配置开发</p>
+              <p class="text-xs text-slate-400 mt-0.5">交付流程AI化 · 张伟</p>
+            </div>
+            <span class="text-xs font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded-full flex-shrink-0">4天</span>
+          </div>
+          <div class="flex items-start gap-3 p-2.5 rounded-lg bg-amber-50/60 border border-amber-100 cursor-pointer hover:bg-amber-50 transition-colors">
+            <div class="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <svg style="width:14px;height:14px;color:#D97706" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-semibold text-slate-700 truncate">产品化需求池处理</p>
+              <p class="text-xs text-slate-400 mt-0.5">咨询服务产品化 · 陈晨</p>
+            </div>
+            <span class="text-xs font-bold text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full flex-shrink-0">3天</span>
+          </div>
+          <div class="flex items-start gap-3 p-2.5 rounded-lg bg-amber-50/60 border border-amber-100 cursor-pointer hover:bg-amber-50 transition-colors">
+            <div class="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <svg style="width:14px;height:14px;color:#D97706" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-semibold text-slate-700 truncate">平台性能压测与优化</p>
+              <p class="text-xs text-slate-400 mt-0.5">技术底座与平台预研 · 刘洋</p>
+            </div>
+            <span class="text-xs font-bold text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full flex-shrink-0">2天</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 需冯海林决策事项 -->
+      <div class="card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-sm font-bold text-slate-800">需我决策事项</h2>
+          <a href="#" class="text-xs text-blue-500 hover:text-blue-700 font-medium cursor-pointer">查看更多 →</a>
+        </div>
+        <div class="space-y-3">
+          <div class="p-3 rounded-xl border-2 border-red-200 bg-red-50/50 cursor-pointer hover:border-red-300 transition-colors">
+            <div class="flex items-start justify-between gap-2">
+              <p class="text-xs font-semibold text-slate-700 leading-snug flex-1">是否采用第三方大模型API作为底层能力补充？</p>
+              <span class="risk-tag risk-high flex-shrink-0">高</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-1.5">知识资产AI化</p>
+          </div>
+          <div class="p-3 rounded-xl border-2 border-amber-200 bg-amber-50/50 cursor-pointer hover:border-amber-300 transition-colors">
+            <div class="flex items-start justify-between gap-2">
+              <p class="text-xs font-semibold text-slate-700 leading-snug flex-1">咨询产品定价策略方案选择</p>
+              <span class="risk-tag risk-mid flex-shrink-0">中</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-1.5">咨询服务产品化</p>
+          </div>
+          <div class="p-3 rounded-xl border-2 border-amber-200 bg-amber-50/50 cursor-pointer hover:border-amber-300 transition-colors">
+            <div class="flex items-start justify-between gap-2">
+              <p class="text-xs font-semibold text-slate-700 leading-snug flex-1">平台资源扩容预算申请（预估20万）</p>
+              <span class="risk-tag risk-mid flex-shrink-0">中</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-1.5">技术底座与平台预研</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── ROW 4: 风险 + 最新成果 ── -->
+    <div class="grid grid-cols-5 gap-4">
+
+      <!-- 主要风险与问题 -->
+      <div class="card p-5 col-span-3">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-sm font-bold text-slate-800">主要风险与问题</h2>
+          <a href="#" class="text-xs text-blue-500 hover:text-blue-700 font-medium cursor-pointer">查看更多 →</a>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs">
+            <thead>
+              <tr class="border-b border-slate-100">
+                <th class="text-left text-slate-400 font-semibold pb-2 pr-3">风险/问题描述</th>
+                <th class="text-left text-slate-400 font-semibold pb-2 pr-3">影响专项</th>
+                <th class="text-left text-slate-400 font-semibold pb-2 pr-3">风险等级</th>
+                <th class="text-left text-slate-400 font-semibold pb-2 pr-3">状态</th>
+                <th class="text-left text-slate-400 font-semibold pb-2">责任人</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-50">
+              <tr>
+                <td class="py-2.5 pr-3">
+                  <div class="flex items-start gap-1.5">
+                    <svg style="width:12px;height:12px;color:#F59E0B;flex-shrink:0;margin-top:1px" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                    <span class="text-slate-600">部分知识资产质量不高，影响AI效果</span>
+                  </div>
+                </td>
+                <td class="py-2.5 pr-3 text-slate-500">知识资产AI化</td>
+                <td class="py-2.5 pr-3"><span class="risk-tag risk-high">高</span></td>
+                <td class="py-2.5 pr-3"><span class="badge s-inprogress">处理中</span></td>
+                <td class="py-2.5 text-slate-600 font-medium">李明</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 pr-3">
+                  <div class="flex items-start gap-1.5">
+                    <svg style="width:12px;height:12px;color:#F59E0B;flex-shrink:0;margin-top:1px" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                    <span class="text-slate-600">顾问作业助手用户接受度低于预期</span>
+                  </div>
+                </td>
+                <td class="py-2.5 pr-3 text-slate-500">顾问作业AI化</td>
+                <td class="py-2.5 pr-3"><span class="risk-tag risk-mid">中</span></td>
+                <td class="py-2.5 pr-3"><span class="text-slate-500">跟踪中</span></td>
+                <td class="py-2.5 text-slate-600 font-medium">王雪</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 pr-3">
+                  <div class="flex items-start gap-1.5">
+                    <svg style="width:12px;height:12px;color:#F59E0B;flex-shrink:0;margin-top:1px" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                    <span class="text-slate-600">交付流程AI化依赖系统接口未开放</span>
+                  </div>
+                </td>
+                <td class="py-2.5 pr-3 text-slate-500">交付流程AI化</td>
+                <td class="py-2.5 pr-3"><span class="risk-tag risk-high">高</span></td>
+                <td class="py-2.5 pr-3"><span class="text-red-500 font-medium">待解决</span></td>
+                <td class="py-2.5 text-slate-600 font-medium">张伟</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 最新成果 -->
+      <div class="card p-5 col-span-2">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-sm font-bold text-slate-800">最新成果</h2>
+          <a href="#" class="text-xs text-blue-500 hover:text-blue-700 font-medium cursor-pointer">查看更多 →</a>
+        </div>
+        <div class="space-y-2.5">
+          <div class="flex items-center gap-3 p-2.5 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background:#EFF6FF">
+              <svg style="width:14px;height:14px;color:#2563EB" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-semibold text-slate-700 truncate">知识资产标签体系V1.0</p>
+              <p class="text-xs text-slate-400 mt-0.5">文档 · 李明 · 05-13</p>
+            </div>
+            <span class="badge s-inprogress flex-shrink-0">进行中</span>
+          </div>
+          <div class="flex items-center gap-3 p-2.5 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background:#F0FDF4">
+              <svg style="width:14px;height:14px;color:#059669" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/></svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-semibold text-slate-700 truncate">顾问作业助手原型设计</p>
+              <p class="text-xs text-slate-400 mt-0.5">原型 · 王雪 · 05-13</p>
+            </div>
+            <span class="badge s-inprogress flex-shrink-0">进行中</span>
+          </div>
+          <div class="flex items-center gap-3 p-2.5 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background:#FFF7ED">
+              <svg style="width:14px;height:14px;color:#D97706" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-semibold text-slate-700 truncate">交付流程自动化方案V2.0</p>
+              <p class="text-xs text-slate-400 mt-0.5">方案 · 张伟 · 05-12</p>
+            </div>
+            <span class="badge s-inprogress flex-shrink-0">进行中</span>
+          </div>
+          <div class="flex items-center gap-3 p-2.5 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background:#EFF6FF">
+              <svg style="width:14px;height:14px;color:#2563EB" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-semibold text-slate-700 truncate">平台权限体系设计文档</p>
+              <p class="text-xs text-slate-400 mt-0.5">文档 · 刘洋 · 05-12</p>
+            </div>
+            <span class="badge s-inprogress flex-shrink-0">进行中</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+// Donut Chart
+const ctx = document.getElementById('donutChart').getContext('2d');
+new Chart(ctx, {
+  type: 'doughnut',
+  data: {
+    labels: ['未启动', '进行中', '已完成', '延期', '暂缓'],
+    datasets: [{
+      data: [5, 13, 8, 4, 1],
+      backgroundColor: ['#9CA3AF','#2563EB','#059669','#DC2626','#D97706'],
+      borderWidth: 2,
+      borderColor: '#fff',
+      hoverOffset: 4
+    }]
+  },
+  options: {
+    cutout: '72%',
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: ctx => ` ${ctx.label}: ${ctx.parsed} 项`
+        }
+      }
+    },
+    animation: { animateRotate: true, duration: 800 }
+  }
+});
+</script>
+</body>
+</html>

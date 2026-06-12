@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>博维AI驾驶舱 · AI确认中心</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; box-sizing: border-box; }
+  body { background: #F1F5F9; }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 99px; }
+
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 14px;
+    border-radius: 8px; color: #94A3B8; font-size: 13.5px; font-weight: 500;
+    cursor: pointer; transition: all 0.18s; text-decoration: none;
+    border-left: 2px solid transparent;
+  }
+  .nav-item:hover { background: rgba(255,255,255,0.07); color: #E2E8F0; }
+  .nav-item.active { background: rgba(14,165,233,0.15); color: #38BDF8; border-left: 2px solid #0EA5E9; }
+
+  .card { background: #fff; border-radius: 14px; border: 1px solid #E9EFF6; box-shadow: 0 1px 4px rgba(15,23,42,0.06); }
+
+  /* Status badges */
+  .badge { display:inline-flex; align-items:center; padding:2px 9px; border-radius:20px; font-size:11.5px; font-weight:600; white-space:nowrap; }
+  .s-pending  { background:#FEF3C7; color:#92400E; }
+  .s-done     { background:#D1FAE5; color:#065F46; }
+  .s-back     { background:#FEE2E2; color:#991B1B; }
+
+  /* Source type tags */
+  .src-voice   { background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE; }
+  .src-meeting { background:#F0FDF4; color:#15803D; border:1px solid #BBF7D0; }
+  .src-tag { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:6px; font-size:11px; font-weight:600; }
+
+  /* Confidence */
+  .conf-high { color:#059669; font-weight:700; }
+  .conf-mid  { color:#D97706; font-weight:700; }
+  .conf-low  { color:#DC2626; font-weight:700; }
+
+  /* Table rows */
+  tbody tr { transition: background 0.12s; cursor: pointer; }
+  tbody tr:hover { background: #F0F9FF; }
+  tbody tr.selected { background: #E0F2FE; border-left: 2px solid #0369A1; }
+  tbody tr.selected td:first-child { padding-left: 10px; }
+
+  /* Detail field rows */
+  .dfield { display:flex; align-items:flex-start; padding:8px 0; border-bottom:1px solid #F8FAFC; font-size:12px; }
+  .dfield:last-child { border-bottom:none; }
+  .dfield-key { width:80px; flex-shrink:0; color:#64748B; font-weight:600; padding-top:1px; }
+  .dfield-val { flex:1; color:#1E293B; line-height:1.55; }
+
+  /* Toggle switch */
+  .toggle { position:relative; display:inline-block; width:36px; height:20px; flex-shrink:0; }
+  .toggle input { opacity:0; width:0; height:0; }
+  .toggle-slider { position:absolute; inset:0; border-radius:99px; background:#E2E8F0; cursor:pointer; transition:0.2s; }
+  .toggle-slider::before { content:''; position:absolute; height:14px; width:14px; left:3px; bottom:3px; background:white; border-radius:50%; transition:0.2s; box-shadow:0 1px 3px rgba(0,0,0,0.2); }
+  .toggle input:checked + .toggle-slider { background:#0369A1; }
+  .toggle input:checked + .toggle-slider::before { transform:translateX(16px); }
+
+  /* Destination cards */
+  .dest-card { display:flex; align-items:flex-start; gap:12px; padding:12px; border-radius:10px; border:1.5px solid #E9EFF6; transition:border-color 0.18s; }
+  .dest-card:hover { border-color:#BAE6FD; }
+  .dest-card.active { border-color:#0369A1; background:#F0F9FF; }
+
+  @keyframes fadeUp { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  .fade-up { animation: fadeUp 0.35s ease both; }
+  @media (prefers-reduced-motion: reduce) { * { animation:none!important; transition:none!important; } }
+</style>
+</head>
+<body class="flex h-screen overflow-hidden">
+
+<!-- ═══════ SIDEBAR ═══════ -->
+<aside class="w-56 flex-shrink-0 flex flex-col overflow-hidden" style="background:#0F172A">
+  <div class="flex items-center gap-3 px-5 h-16 border-b flex-shrink-0" style="border-color:rgba(255,255,255,0.08)">
+    <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background:linear-gradient(135deg,#0EA5E9,#0369A1)">
+      <svg style="width:18px;height:18px" class="text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+    </div>
+    <div>
+      <div class="text-white text-sm font-bold tracking-tight leading-none">博维 AI</div>
+      <div class="text-slate-500 text-xs mt-0.5">升级项目驾驶舱</div>
+    </div>
+  </div>
+  <nav class="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+    <a class="nav-item" href="bowei-page1-dashboard.html"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>首页驾驶舱</a>
+    <a class="nav-item" href="bowei-page2-voice.html"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>语音更新</a>
+    <a class="nav-item" href="bowei-page3-meeting.html"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>会议纪要</a>
+    <a class="nav-item active" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      AI 确认中心
+      <span class="ml-auto bg-orange-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none">6</span>
+    </a>
+    <a class="nav-item" href="#"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>工作推进表</a>
+    <div class="pt-4 pb-1 px-2"><div class="text-slate-600 font-semibold uppercase" style="font-size:10px;letter-spacing:0.1em">资源库</div></div>
+    <a class="nav-item" href="#"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>成果库</a>
+    <a class="nav-item" href="#"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>问题与决策</a>
+    <a class="nav-item" href="#"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>组织与分工</a>
+    <a class="nav-item" href="#"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>系统设置</a>
+  </nav>
+  <div class="px-4 py-3 border-t flex items-center gap-3 flex-shrink-0" style="border-color:rgba(255,255,255,0.08)">
+    <div class="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0" style="background:linear-gradient(135deg,#3B82F6,#0369A1)">冯</div>
+    <div class="flex-1 min-w-0">
+      <div class="text-white text-sm font-semibold truncate">冯海林</div>
+      <div class="text-slate-500 text-xs truncate">总经理 · 管理员</div>
+    </div>
+  </div>
+</aside>
+
+<!-- ═══════ MAIN ═══════ -->
+<div class="flex-1 flex flex-col overflow-hidden">
+
+  <!-- Top Bar -->
+  <header class="h-16 flex items-center px-6 gap-3 flex-shrink-0 bg-white border-b" style="border-color:#E9EFF6">
+    <div class="flex-1">
+      <h1 class="text-base font-bold text-slate-800">AI 确认中心</h1>
+      <p class="text-xs text-slate-400 mt-0.5">对AI提取结果进行确认、修改、退回与写入入库</p>
+    </div>
+    <!-- Filters -->
+    <select class="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30">
+      <option>全部状态</option><option>待确认</option><option>已确认</option><option>已退回</option>
+    </select>
+    <select class="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30">
+      <option>全部专项</option><option>知识库AI化</option><option>交付流程AI化</option>
+    </select>
+    <select class="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30">
+      <option>全部提交人</option><option>李明</option><option>王雪</option><option>张伟</option>
+    </select>
+    <select class="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30">
+      <option>待确认优先</option><option>时间倒序</option><option>置信度降序</option>
+    </select>
+    <div class="relative">
+      <svg class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" style="width:13px;height:13px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+      <input type="text" placeholder="搜索任务、会议、提交人" class="pl-8 pr-3 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 w-48" />
+    </div>
+  </header>
+
+  <!-- Content -->
+  <div class="flex-1 overflow-hidden flex flex-col p-6 gap-5 fade-up">
+
+    <!-- ── TOP: 队列 + 详情 ── -->
+    <div class="flex gap-5 flex-1 overflow-hidden min-h-0">
+
+      <!-- 待确认队列 -->
+      <div class="card flex flex-col overflow-hidden" style="width:56%">
+        <div class="flex items-center justify-between px-5 py-3.5 border-b border-slate-100 flex-shrink-0">
+          <div class="flex items-center gap-2">
+            <h2 class="text-sm font-bold text-slate-800">待确认队列</h2>
+            <span class="w-5 h-5 rounded-full bg-orange-100 text-orange-600 text-xs font-bold flex items-center justify-center">6</span>
+          </div>
+          <span class="text-xs text-slate-400">点击行查看详情</span>
+        </div>
+        <div class="overflow-auto flex-1">
+          <table class="w-full text-xs">
+            <thead class="sticky top-0 bg-white z-10">
+              <tr class="border-b border-slate-100">
+                <th class="text-left text-slate-400 font-semibold py-2.5 px-4">来源</th>
+                <th class="text-left text-slate-400 font-semibold py-2.5 pr-3">提交人</th>
+                <th class="text-left text-slate-400 font-semibold py-2.5 pr-3">关联专项</th>
+                <th class="text-left text-slate-400 font-semibold py-2.5 pr-3">AI建议摘要</th>
+                <th class="text-left text-slate-400 font-semibold py-2.5 pr-3">置信度</th>
+                <th class="text-left text-slate-400 font-semibold py-2.5 pr-3">时间</th>
+                <th class="text-left text-slate-400 font-semibold py-2.5 pr-3">状态</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-50">
+              <!-- Row 1 - selected -->
+              <tr class="selected" onclick="selectRow(this)">
+                <td class="py-3 px-4">
+                  <span class="src-tag src-voice">
+                    <svg style="width:10px;height:10px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+                    语音更新
+                  </span>
+                </td>
+                <td class="py-3 pr-3"><div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded-full bg-blue-100 text-blue-600 font-bold flex items-center justify-center" style="font-size:10px">李</div>李明</div></td>
+                <td class="py-3 pr-3 text-slate-600">知识库AI化</td>
+                <td class="py-3 pr-3 text-slate-600 max-w-xs">
+                  <p class="truncate">完成知识库RAG检索准确率提升…</p>
+                  <p class="text-slate-400 mt-0.5 truncate">建议完善命中词调优策略。</p>
+                </td>
+                <td class="py-3 pr-3"><span class="conf-high">92%</span></td>
+                <td class="py-3 pr-3 text-slate-400">05-16 16:42</td>
+                <td class="py-3 pr-3"><span class="badge s-pending">待确认</span></td>
+              </tr>
+              <!-- Row 2 -->
+              <tr onclick="selectRow(this)">
+                <td class="py-3 px-4">
+                  <span class="src-tag src-meeting">
+                    <svg style="width:10px;height:10px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                    会议纪要
+                  </span>
+                </td>
+                <td class="py-3 pr-3"><div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded-full bg-violet-100 text-violet-600 font-bold flex items-center justify-center" style="font-size:10px">王</div>王雪</div></td>
+                <td class="py-3 pr-3 text-slate-600">交付流程AI化</td>
+                <td class="py-3 pr-3 text-slate-600 max-w-xs">
+                  <p class="truncate">交付流程自动化试点在XX事业部…</p>
+                  <p class="text-slate-400 mt-0.5 truncate">建议标准化交付模板。</p>
+                </td>
+                <td class="py-3 pr-3"><span class="conf-high">88%</span></td>
+                <td class="py-3 pr-3 text-slate-400">05-15 15:18</td>
+                <td class="py-3 pr-3"><span class="badge s-pending">待确认</span></td>
+              </tr>
+              <!-- Row 3 -->
+              <tr onclick="selectRow(this)">
+                <td class="py-3 px-4">
+                  <span class="src-tag src-voice">
+                    <svg style="width:10px;height:10px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+                    语音更新
+                  </span>
+                </td>
+                <td class="py-3 pr-3"><div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 font-bold flex items-center justify-center" style="font-size:10px">张</div>张伟</div></td>
+                <td class="py-3 pr-3 text-slate-600">咨询服务产品化</td>
+                <td class="py-3 pr-3 text-slate-600 max-w-xs">
+                  <p class="truncate">明确需求评估框架与报价模型…</p>
+                  <p class="text-slate-400 mt-0.5 truncate">建议沉淀为标准交付物。</p>
+                </td>
+                <td class="py-3 pr-3"><span class="conf-high">90%</span></td>
+                <td class="py-3 pr-3 text-slate-400">05-15 14:09</td>
+                <td class="py-3 pr-3"><span class="badge s-pending">待确认</span></td>
+              </tr>
+              <!-- Row 4 -->
+              <tr onclick="selectRow(this)">
+                <td class="py-3 px-4">
+                  <span class="src-tag src-meeting">
+                    <svg style="width:10px;height:10px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                    会议纪要
+                  </span>
+                </td>
+                <td class="py-3 pr-3"><div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded-full bg-rose-100 text-rose-600 font-bold flex items-center justify-center" style="font-size:10px">陈</div>陈晨</div></td>
+                <td class="py-3 pr-3 text-slate-600">平台权限体系梳理</td>
+                <td class="py-3 pr-3 text-slate-600 max-w-xs">
+                  <p class="truncate">平台角色权限方案已对齐…</p>
+                  <p class="text-slate-400 mt-0.5 truncate">需在下周完成试点验证。</p>
+                </td>
+                <td class="py-3 pr-3"><span class="conf-mid">85%</span></td>
+                <td class="py-3 pr-3 text-slate-400">05-15 11:30</td>
+                <td class="py-3 pr-3"><span class="badge s-done">已确认</span></td>
+              </tr>
+              <!-- Row 5 -->
+              <tr onclick="selectRow(this)">
+                <td class="py-3 px-4">
+                  <span class="src-tag src-voice">
+                    <svg style="width:10px;height:10px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+                    语音更新
+                  </span>
+                </td>
+                <td class="py-3 pr-3"><div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded-full bg-amber-100 text-amber-600 font-bold flex items-center justify-center" style="font-size:10px">刘</div>刘洋</div></td>
+                <td class="py-3 pr-3 text-slate-600">数据平台能力建设</td>
+                <td class="py-3 pr-3 text-slate-600 max-w-xs">
+                  <p class="truncate">数据接入与质量治理方案…</p>
+                  <p class="text-slate-400 mt-0.5 truncate">建议分阶段推进落地。</p>
+                </td>
+                <td class="py-3 pr-3"><span class="conf-low">78%</span></td>
+                <td class="py-3 pr-3 text-slate-400">05-15 10:05</td>
+                <td class="py-3 pr-3"><span class="badge s-back">已退回</span></td>
+              </tr>
+              <!-- Row 6 -->
+              <tr onclick="selectRow(this)">
+                <td class="py-3 px-4">
+                  <span class="src-tag src-meeting">
+                    <svg style="width:10px;height:10px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                    会议纪要
+                  </span>
+                </td>
+                <td class="py-3 pr-3"><div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded-full bg-blue-100 text-blue-600 font-bold flex items-center justify-center" style="font-size:10px">李</div>李明</div></td>
+                <td class="py-3 pr-3 text-slate-600">成本优化专项</td>
+                <td class="py-3 pr-3 text-slate-600 max-w-xs">
+                  <p class="truncate">云资源成本优化清单确认…</p>
+                  <p class="text-slate-400 mt-0.5 truncate">建议按优先级分批执行。</p>
+                </td>
+                <td class="py-3 pr-3"><span class="conf-high">86%</span></td>
+                <td class="py-3 pr-3 text-slate-400">05-14 17:22</td>
+                <td class="py-3 pr-3"><span class="badge s-done">已确认</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <!-- Pagination -->
+        <div class="flex items-center justify-between px-5 py-3 border-t border-slate-100 flex-shrink-0">
+          <span class="text-xs text-slate-400">共 6 条</span>
+          <div class="flex items-center gap-1">
+            <button class="cursor-pointer w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-100 disabled:opacity-30" disabled>
+              <svg style="width:12px;height:12px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+            </button>
+            <button class="cursor-pointer w-7 h-7 rounded-lg text-white text-xs font-bold" style="background:#0369A1">1</button>
+            <button class="cursor-pointer w-7 h-7 rounded-lg text-slate-500 text-xs hover:bg-slate-100">
+              <svg style="width:12px;height:12px;margin:auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            </button>
+          </div>
+          <span class="text-xs text-slate-400">10 条/页</span>
+        </div>
+      </div>
+
+      <!-- 当前记录详情 -->
+      <div class="card flex flex-col overflow-hidden flex-1">
+        <div class="flex items-center justify-between px-5 py-3.5 border-b border-slate-100 flex-shrink-0">
+          <h2 class="text-sm font-bold text-slate-800">当前记录详情</h2>
+          <div class="flex items-center gap-2 text-xs text-slate-400">
+            <span>来源：语音更新</span>
+            <span>|</span>
+            <span>提交时间：2025-05-16 16:42</span>
+          </div>
+        </div>
+        <div class="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+
+          <!-- AI识别结果 -->
+          <div>
+            <div class="flex items-center gap-2 mb-3">
+              <div class="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0" style="background:linear-gradient(135deg,#6366F1,#0EA5E9)">
+                <svg style="width:10px;height:10px;color:white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+              </div>
+              <span class="text-xs font-bold text-slate-700">AI 识别结果</span>
+            </div>
+            <div class="rounded-xl p-3 space-y-0.5" style="background:#F8FAFC;border:1px solid #E9EFF6">
+              <div class="dfield">
+                <span class="dfield-key">专项</span>
+                <span class="dfield-val font-semibold" style="color:#0369A1">知识库AI化</span>
+                <select class="ml-auto text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white text-slate-600 cursor-pointer focus:outline-none" style="font-size:11px">
+                  <option>知识库AI化</option><option>交付流程AI化</option>
+                </select>
+              </div>
+              <div class="dfield">
+                <span class="dfield-key">任务</span>
+                <span class="dfield-val">提升知识库检索准确率</span>
+              </div>
+              <div class="dfield">
+                <span class="dfield-key">完成事项</span>
+                <span class="dfield-val text-slate-600">完成RAG索引流程优化与向量化策略调整</span>
+              </div>
+              <div class="dfield">
+                <span class="dfield-key">成果</span>
+                <span class="dfield-val font-medium text-emerald-700">RAG检索准确率提升至78%，平均响应时间降低18%</span>
+              </div>
+              <div class="dfield">
+                <span class="dfield-key">问题</span>
+                <span class="dfield-val text-amber-700">低频长尾问题召回率仍偏低，相关语料不足</span>
+              </div>
+              <div class="dfield">
+                <span class="dfield-key">下周计划</span>
+                <span class="dfield-val text-slate-600">补充长尾问题语料，优化召回调度策略</span>
+              </div>
+              <div class="dfield">
+                <span class="dfield-key">需协调人</span>
+                <span class="dfield-val">数据团队·刘洋，算法团队·张伟</span>
+              </div>
+              <div class="dfield">
+                <span class="dfield-key">状态建议</span>
+                <span class="dfield-val flex items-center gap-1.5">
+                  <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                  <span class="font-medium text-blue-700">进行中</span>
+                </span>
+                <select class="ml-auto text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white text-slate-600 cursor-pointer focus:outline-none" style="font-size:11px">
+                  <option>进行中</option><option>已完成</option><option>暂缓</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- 入库去向 -->
+          <div>
+            <div class="flex items-center gap-1.5 mb-3">
+              <span class="text-xs font-bold text-slate-700">入库去向</span>
+              <div class="relative group">
+                <svg style="width:13px;height:13px;color:#94A3B8;cursor:help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              </div>
+            </div>
+            <div class="space-y-2.5">
+              <!-- 工作推进表 -->
+              <div class="dest-card active">
+                <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background:#EFF6FF">
+                  <svg style="width:14px;height:14px;color:#2563EB" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs font-bold text-slate-700">写入工作推进表</p>
+                  <p class="text-xs text-slate-400 mt-0.5">作为任务成进展写入工作推进表</p>
+                </div>
+                <label class="toggle flex-shrink-0">
+                  <input type="checkbox" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <!-- 问题库 -->
+              <div class="dest-card active">
+                <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background:#FFF7ED">
+                  <svg style="width:14px;height:14px;color:#D97706" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs font-bold text-slate-700">写入问题库</p>
+                  <p class="text-xs text-slate-400 mt-0.5">提取的问题与产出写入问题库</p>
+                </div>
+                <label class="toggle flex-shrink-0">
+                  <input type="checkbox" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <!-- 成果库 -->
+              <div class="dest-card">
+                <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background:#EDE9FE">
+                  <svg style="width:14px;height:14px;color:#7C3AED" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs font-bold text-slate-700">写入成果库</p>
+                  <p class="text-xs text-slate-400 mt-0.5">结果与产出写入成果库</p>
+                </div>
+                <label class="toggle flex-shrink-0">
+                  <input type="checkbox">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- 操作备注 -->
+          <div>
+            <p class="text-xs text-slate-400 mb-1">负责人可直接修改王部分字段后入库</p>
+          </div>
+        </div>
+
+        <!-- Action buttons -->
+        <div class="px-5 py-4 border-t border-slate-100 flex gap-2.5 flex-shrink-0">
+          <button class="cursor-pointer flex-1 py-2.5 rounded-xl text-white text-sm font-bold transition-all hover:opacity-90 active:scale-95" style="background:linear-gradient(135deg,#0369A1,#0EA5E9);box-shadow:0 2px 8px rgba(3,105,161,0.3)">
+            确认写入
+          </button>
+          <button class="cursor-pointer flex-1 py-2.5 rounded-xl border-2 border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 transition-colors">
+            退回修改
+          </button>
+          <button class="cursor-pointer flex-1 py-2.5 rounded-xl border-2 border-amber-200 text-amber-600 text-sm font-semibold hover:bg-amber-50 transition-colors">
+            标记待补充
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── BOTTOM: 操作日志 ── -->
+    <div class="card p-5 flex-shrink-0">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-bold text-slate-800">操作日志</h2>
+        <a href="#" class="text-xs text-blue-500 hover:text-blue-700 font-medium cursor-pointer">查看更多 →</a>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="border-b border-slate-100">
+              <th class="text-left text-slate-400 font-semibold pb-2 pr-4">操作人</th>
+              <th class="text-left text-slate-400 font-semibold pb-2 pr-4">操作</th>
+              <th class="text-left text-slate-400 font-semibold pb-2 pr-4">对象</th>
+              <th class="text-left text-slate-400 font-semibold pb-2 pr-4">时间</th>
+              <th class="text-left text-slate-400 font-semibold pb-2">结果</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-50">
+            <tr>
+              <td class="py-2.5 pr-4"><div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded-full bg-violet-100 text-violet-600 font-bold flex items-center justify-center" style="font-size:10px">王</div>王雪</div></td>
+              <td class="py-2.5 pr-4 text-slate-600">退回修改</td>
+              <td class="py-2.5 pr-4 text-slate-500">交付流程自动化试点在XX事业部落地情况</td>
+              <td class="py-2.5 pr-4 text-slate-400">05-16 15:40</td>
+              <td class="py-2.5"><span class="text-amber-600 font-medium">已退回，待重新提交</span></td>
+            </tr>
+            <tr>
+              <td class="py-2.5 pr-4"><div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded-full bg-blue-100 text-blue-600 font-bold flex items-center justify-center" style="font-size:10px">李</div>李明</div></td>
+              <td class="py-2.5 pr-4 text-slate-600">确认写入（工作推进表 + 成果库）</td>
+              <td class="py-2.5 pr-4 text-slate-500">知识库RAG检索准确率提升</td>
+              <td class="py-2.5 pr-4 text-slate-400">05-16 10:12</td>
+              <td class="py-2.5"><span class="text-emerald-600 font-medium">写入成功</span></td>
+            </tr>
+            <tr>
+              <td class="py-2.5 pr-4"><div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 font-bold flex items-center justify-center" style="font-size:10px">张</div>张伟</div></td>
+              <td class="py-2.5 pr-4 text-slate-600">标记待补充</td>
+              <td class="py-2.5 pr-4 text-slate-500">平台权限体系梳理进展</td>
+              <td class="py-2.5 pr-4 text-slate-400">05-15 17:25</td>
+              <td class="py-2.5"><span class="text-amber-600 font-medium">待补充说明</span></td>
+            </tr>
+            <tr>
+              <td class="py-2.5 pr-4"><div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded-full bg-slate-100 text-slate-600 font-bold flex items-center justify-center" style="font-size:10px">冯</div>冯海林</div></td>
+              <td class="py-2.5 pr-4 text-slate-600">确认写入（问题库）</td>
+              <td class="py-2.5 pr-4 text-slate-500">低频长尾问题召回率偏低</td>
+              <td class="py-2.5 pr-4 text-slate-400">05-15 14:05</td>
+              <td class="py-2.5"><span class="text-emerald-600 font-medium">写入成功</span></td>
+            </tr>
+            <tr>
+              <td class="py-2.5 pr-4"><div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded-full bg-amber-100 text-amber-600 font-bold flex items-center justify-center" style="font-size:10px">刘</div>刘洋</div></td>
+              <td class="py-2.5 pr-4 text-slate-600">退回修改</td>
+              <td class="py-2.5 pr-4 text-slate-500">数据接入与质量治理方案</td>
+              <td class="py-2.5 pr-4 text-slate-400">05-15 10:28</td>
+              <td class="py-2.5"><span class="text-amber-600 font-medium">已退回，待重新提交</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function selectRow(row) {
+  document.querySelectorAll('tbody tr').forEach(r => r.classList.remove('selected'));
+  row.classList.add('selected');
+}
+</script>
+</body>
+</html>

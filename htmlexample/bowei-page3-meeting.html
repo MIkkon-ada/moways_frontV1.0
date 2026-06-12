@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>博维AI驾驶舱 · 会议纪要</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; box-sizing: border-box; }
+  body { background: #F1F5F9; }
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 99px; }
+
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 14px;
+    border-radius: 8px; color: #94A3B8; font-size: 13.5px; font-weight: 500;
+    cursor: pointer; transition: all 0.18s; text-decoration: none;
+    border-left: 2px solid transparent;
+  }
+  .nav-item:hover { background: rgba(255,255,255,0.07); color: #E2E8F0; }
+  .nav-item.active { background: rgba(14,165,233,0.15); color: #38BDF8; border-left: 2px solid #0EA5E9; }
+
+  .card { background: #fff; border-radius: 14px; border: 1px solid #E9EFF6; box-shadow: 0 1px 4px rgba(15,23,42,0.06); }
+
+  /* Document styles */
+  .doc-section { padding: 16px 0; border-bottom: 1px solid #F1F5F9; }
+  .doc-section:last-child { border-bottom: none; }
+  .doc-section-title {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 700; color: #1E293B; margin-bottom: 10px;
+  }
+  .doc-section-title::before {
+    content: ''; display: block; width: 3px; height: 14px;
+    border-radius: 99px; background: #0369A1; flex-shrink: 0;
+  }
+  .doc-item { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; font-size: 12.5px; color: #475569; line-height: 1.6; }
+  .doc-item::before { content: '·'; color: #94A3B8; flex-shrink: 0; font-weight: bold; margin-top: 1px; }
+  .doc-kv { display: flex; gap: 8px; margin-bottom: 5px; font-size: 12.5px; }
+  .doc-key { color: #64748B; font-weight: 600; flex-shrink: 0; width: 64px; }
+  .doc-val { color: #1E293B; line-height: 1.5; }
+
+  /* Status badges */
+  .badge { display:inline-flex; align-items:center; padding:2px 9px; border-radius:20px; font-size:11.5px; font-weight:600; white-space:nowrap; }
+  .s-published { background:#D1FAE5; color:#065F46; }
+  .s-draft     { background:#FEF3C7; color:#92400E; }
+  .s-inprogress { background:#DBEAFE; color:#1D4ED8; }
+
+  /* Table */
+  tbody tr { transition: background 0.12s; cursor: default; }
+  tbody tr:hover { background: #F8FAFC; }
+
+  /* Check item */
+  .check-item { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; border-radius:10px; cursor:pointer; transition:background 0.15s; }
+  .check-item:hover { background: #F8FAFC; }
+
+  /* Meeting type tags */
+  .mt-weekly  { background:#EFF6FF; color:#1D4ED8; }
+  .mt-review  { background:#F3E8FF; color:#6B21A8; }
+  .mt-special { background:#F0FDF4; color:#15803D; }
+  .mt-discuss { background:#FFF7ED; color:#C2410C; }
+  .mt-tag { padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; }
+
+  /* Project dots */
+  .proj-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+  @keyframes fadeUp { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  .fade-up { animation: fadeUp 0.35s ease both; }
+  @media (prefers-reduced-motion: reduce) { * { animation:none!important; transition:none!important; } }
+</style>
+</head>
+<body class="flex h-screen overflow-hidden">
+
+<!-- ═══════ SIDEBAR ═══════ -->
+<aside class="w-56 flex-shrink-0 flex flex-col overflow-hidden" style="background:#0F172A">
+  <div class="flex items-center gap-3 px-5 h-16 border-b flex-shrink-0" style="border-color:rgba(255,255,255,0.08)">
+    <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background:linear-gradient(135deg,#0EA5E9,#0369A1)">
+      <svg style="width:18px;height:18px" class="text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+    </div>
+    <div>
+      <div class="text-white text-sm font-bold tracking-tight leading-none">博维 AI</div>
+      <div class="text-slate-500 text-xs mt-0.5">升级项目驾驶舱</div>
+    </div>
+  </div>
+  <nav class="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+    <a class="nav-item" href="bowei-page1-dashboard.html">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+      首页驾驶舱
+    </a>
+    <a class="nav-item" href="bowei-page2-voice.html">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+      语音更新
+    </a>
+    <a class="nav-item active" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+      会议纪要
+    </a>
+    <a class="nav-item" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      AI 确认中心
+      <span class="ml-auto bg-orange-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none">6</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+      工作推进表
+    </a>
+    <div class="pt-4 pb-1 px-2"><div class="text-slate-600 font-semibold uppercase" style="font-size:10px;letter-spacing:0.1em">资源库</div></div>
+    <a class="nav-item" href="#"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>成果库</a>
+    <a class="nav-item" href="#"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>问题与决策</a>
+    <a class="nav-item" href="#"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>组织与分工</a>
+    <a class="nav-item" href="#"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>系统设置</a>
+  </nav>
+  <div class="px-4 py-3 border-t flex items-center gap-3 flex-shrink-0" style="border-color:rgba(255,255,255,0.08)">
+    <div class="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0" style="background:linear-gradient(135deg,#3B82F6,#0369A1)">冯</div>
+    <div class="flex-1 min-w-0">
+      <div class="text-white text-sm font-semibold truncate">冯海林</div>
+      <div class="text-slate-500 text-xs truncate">总经理 · 管理员</div>
+    </div>
+  </div>
+</aside>
+
+<!-- ═══════ MAIN ═══════ -->
+<div class="flex-1 flex flex-col overflow-hidden">
+
+  <!-- Top Bar -->
+  <header class="h-16 flex items-center px-6 gap-4 flex-shrink-0 bg-white border-b" style="border-color:#E9EFF6">
+    <div class="flex-1">
+      <h1 class="text-base font-bold text-slate-800">会议纪要</h1>
+      <p class="text-xs text-slate-400 mt-0.5">上传会议录音，自动生成纪要、任务清单、决策事项与风险问题</p>
+    </div>
+    <!-- Filters -->
+    <div class="flex items-center gap-2">
+      <select class="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30">
+        <option>全部类型</option><option>周例会</option><option>评审会</option><option>专项会</option>
+      </select>
+      <div class="flex items-center gap-1.5 border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 text-sm cursor-pointer hover:bg-slate-50">
+        <svg style="width:13px;height:13px;color:#64748B" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        2025-05-01 ~ 2025-05-31
+      </div>
+      <select class="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30">
+        <option>全部专项</option><option>知识资产AI化</option>
+      </select>
+    </div>
+    <button class="cursor-pointer flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-semibold transition-all hover:opacity-90 active:scale-95" style="background:linear-gradient(135deg,#0369A1,#0EA5E9);box-shadow:0 2px 8px rgba(3,105,161,0.25)">
+      <svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+      上传会议录音
+    </button>
+  </header>
+
+  <!-- Content -->
+  <main class="flex-1 overflow-y-auto p-6 space-y-5 fade-up">
+
+    <!-- ── TOP ROW: 纪要正文 + 任务清单 + 待校对 ── -->
+    <div class="grid grid-cols-5 gap-5">
+
+      <!-- 会议纪要正文 -->
+      <div class="card p-5 col-span-2 overflow-y-auto" style="max-height:560px">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded-md flex items-center justify-center" style="background:linear-gradient(135deg,#6366F1,#0EA5E9)">
+              <svg style="width:12px;height:12px;color:white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            </div>
+            <h2 class="text-sm font-bold text-slate-800">会议纪要正文</h2>
+          </div>
+          <span class="badge s-draft">已生成（待校对）</span>
+        </div>
+
+        <!-- 基本信息 -->
+        <div class="doc-section">
+          <div class="doc-section-title">会议基本信息</div>
+          <div class="doc-kv"><span class="doc-key">会议名称</span><span class="doc-val font-semibold text-slate-800">五个AI升级专项周例会（第12周）</span></div>
+          <div class="doc-kv"><span class="doc-key">日期</span><span class="doc-val">2025-05-19 &nbsp;10:00 – 11:30</span></div>
+          <div class="doc-kv"><span class="doc-key">主持人</span><span class="doc-val">冯海林</span></div>
+          <div class="doc-kv"><span class="doc-key">参会人</span><span class="doc-val">李明、王雪、张伟、刘洋、陈晨、各专项负责人及核心成员</span></div>
+          <div class="doc-kv"><span class="doc-key">会议类型</span><span class="doc-val"><span class="mt-tag mt-weekly">周例会</span></span></div>
+        </div>
+
+        <!-- 完成事项 -->
+        <div class="doc-section">
+          <div class="doc-section-title">本期完成事项</div>
+          <div class="doc-item">知识库升级专项：完成企业知识库RAG优化方案评审，完成核心知识图谱构建设计。</div>
+          <div class="doc-item">超声产线AI化专项：完成超声鼓粒检测模型V2.0训练，准确率提升至95.3%。</div>
+          <div class="doc-item">交付流程AI化专项：完成交付流程SOP梳理与系统映射，流程节点覆盖率达90%。</div>
+          <div class="doc-item">咨询服务产品化专项：完成产品方案初稿及定价模型设计，启动试点客户沟通。</div>
+          <div class="doc-item">技术底座与平台升级专项：完成资源扩容方案评审，启动向量数据库选型。</div>
+        </div>
+
+        <!-- 决策事项 -->
+        <div class="doc-section">
+          <div class="doc-section-title" style="color:#1D4ED8">决策事项</div>
+          <div class="space-y-2">
+            <div class="flex items-start gap-2 p-2.5 rounded-lg bg-blue-50">
+              <svg style="width:14px;height:14px;color:#0369A1;flex-shrink:0;margin-top:1px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <span class="text-xs text-slate-700">同意推进知识库结构化清洗专项，成立专项小组，2周内完成首批高价值文档清洗。</span>
+            </div>
+            <div class="flex items-start gap-2 p-2.5 rounded-lg bg-blue-50">
+              <svg style="width:14px;height:14px;color:#0369A1;flex-shrink:0;margin-top:1px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <span class="text-xs text-slate-700">同意加速超声产线AI化专项的数据采集网关扩容预算，保障数据稳定性。</span>
+            </div>
+            <div class="flex items-start gap-2 p-2.5 rounded-lg bg-blue-50">
+              <svg style="width:14px;height:14px;color:#0369A1;flex-shrink:0;margin-top:1px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <span class="text-xs text-slate-700">同意交付流程AI化专项优先完成与CRM系统的接口打通，作为本阶段交付目标。</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 下期重点 -->
+        <div class="doc-section">
+          <div class="doc-section-title">下期重点</div>
+          <div class="doc-item">知识库升级专项：完成首批核心文档清洗并上线新检索服务。</div>
+          <div class="doc-item">超声产线AI化专项：完成模型V2.0灰度上线及现场验证。</div>
+          <div class="doc-item">交付流程AI化专项：完成与CRM系统接口联调并启动验证闭环。</div>
+          <div class="doc-item">同意咨询服务产品化专项选择2家重点客户开展试点并签署MOU。</div>
+        </div>
+
+        <!-- 风险问题 -->
+        <div class="doc-section">
+          <div class="doc-section-title" style="color:#DC2626">主要问题与风险</div>
+          <div class="space-y-1.5">
+            <div class="flex items-start gap-2">
+              <svg style="width:13px;height:13px;color:#F59E0B;flex-shrink:0;margin-top:1px" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+              <span class="text-xs text-slate-600">知识库数据质量参差不齐，部分历史文档缺失结构化信息，影响检索效果。</span>
+            </div>
+            <div class="flex items-start gap-2">
+              <svg style="width:13px;height:13px;color:#F59E0B;flex-shrink:0;margin-top:1px" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+              <span class="text-xs text-slate-600">交付流程涉及多系统集成，兼容性风险需要充分压测验证。</span>
+            </div>
+            <div class="flex items-start gap-2">
+              <svg style="width:13px;height:13px;color:#F59E0B;flex-shrink:0;margin-top:1px" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+              <span class="text-xs text-slate-600">咨询产品试点客户决策周期较长，需求不确定性存在一定风险。</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右侧：任务清单 + 待校对 -->
+      <div class="col-span-3 flex flex-col gap-4">
+
+        <!-- 自动识别任务清单 -->
+        <div class="card p-5">
+          <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-2">
+              <div class="w-6 h-6 rounded-md bg-emerald-500 flex items-center justify-center">
+                <svg style="width:12px;height:12px;color:white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+              </div>
+              <h2 class="text-sm font-bold text-slate-800">自动识别任务清单</h2>
+              <span class="w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 text-xs font-bold flex items-center justify-center">4</span>
+            </div>
+            <a href="#" class="text-xs text-blue-500 hover:text-blue-700 font-medium cursor-pointer">查看全部任务 →</a>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-xs">
+              <thead>
+                <tr class="border-b border-slate-100">
+                  <th class="text-left text-slate-400 font-semibold pb-2.5 pr-3 w-8">#</th>
+                  <th class="text-left text-slate-400 font-semibold pb-2.5 pr-3">任务</th>
+                  <th class="text-left text-slate-400 font-semibold pb-2.5 pr-3">责任人</th>
+                  <th class="text-left text-slate-400 font-semibold pb-2.5 pr-3">协同人</th>
+                  <th class="text-left text-slate-400 font-semibold pb-2.5 pr-3">截止时间</th>
+                  <th class="text-left text-slate-400 font-semibold pb-2.5">完成标准</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-50">
+                <tr>
+                  <td class="py-3 pr-3 text-slate-400 font-bold">1</td>
+                  <td class="py-3 pr-3">
+                    <p class="text-slate-700 font-semibold leading-snug">完成知识库首批核心文档清洗</p>
+                    <p class="text-slate-400 mt-0.5">（不少于500份）</p>
+                  </td>
+                  <td class="py-3 pr-3"><div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded-full bg-blue-100 text-blue-600 font-bold flex items-center justify-center" style="font-size:10px">李</div><span class="text-slate-600">李明</span></div></td>
+                  <td class="py-3 pr-3"><div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded-full bg-violet-100 text-violet-600 font-bold flex items-center justify-center" style="font-size:10px">王</div><span class="text-slate-600">王雪</span></div></td>
+                  <td class="py-3 pr-3 text-slate-600">2025-05-30</td>
+                  <td class="py-3 text-slate-500">清洗完成并入库，检索准确率提升≥15%</td>
+                </tr>
+                <tr>
+                  <td class="py-3 pr-3 text-slate-400 font-bold">2</td>
+                  <td class="py-3 pr-3">
+                    <p class="text-slate-700 font-semibold leading-snug">超声产线AI模型V2.0灰度上线</p>
+                  </td>
+                  <td class="py-3 pr-3"><div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 font-bold flex items-center justify-center" style="font-size:10px">张</div><span class="text-slate-600">张伟</span></div></td>
+                  <td class="py-3 pr-3"><div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded-full bg-amber-100 text-amber-600 font-bold flex items-center justify-center" style="font-size:10px">刘</div><span class="text-slate-600">刘洋</span></div></td>
+                  <td class="py-3 pr-3 text-slate-600">2025-05-30</td>
+                  <td class="py-3 text-slate-500">灰度上线覆盖2条产线，准确率≥95%</td>
+                </tr>
+                <tr>
+                  <td class="py-3 pr-3 text-slate-400 font-bold">3</td>
+                  <td class="py-3 pr-3">
+                    <p class="text-slate-700 font-semibold leading-snug">完成交付流程与CRM系统接口联调</p>
+                  </td>
+                  <td class="py-3 pr-3"><div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded-full bg-rose-100 text-rose-600 font-bold flex items-center justify-center" style="font-size:10px">陈</div><span class="text-slate-600">陈晨</span></div></td>
+                  <td class="py-3 pr-3 text-slate-400">—</td>
+                  <td class="py-3 pr-3 text-orange-600 font-semibold">2025-06-06</td>
+                  <td class="py-3 text-slate-500">联调通过，关键流程闭环验证通过</td>
+                </tr>
+                <tr>
+                  <td class="py-3 pr-3 text-slate-400 font-bold">4</td>
+                  <td class="py-3 pr-3">
+                    <p class="text-slate-700 font-semibold leading-snug">输出咨询产品试点方案并完成客户访谈</p>
+                  </td>
+                  <td class="py-3 pr-3"><div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded-full bg-violet-100 text-violet-600 font-bold flex items-center justify-center" style="font-size:10px">王</div><span class="text-slate-600">王雪</span></div></td>
+                  <td class="py-3 pr-3"><div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded-full bg-rose-100 text-rose-600 font-bold flex items-center justify-center" style="font-size:10px">陈</div><span class="text-slate-600">陈晨</span></div></td>
+                  <td class="py-3 pr-3 text-slate-600">2025-05-30</td>
+                  <td class="py-3 text-slate-500">形成方案文档，完成≥2家客户访谈</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 待校对事项 + 操作 -->
+        <div class="card p-5">
+          <div class="flex items-start gap-5">
+            <!-- 待校对 -->
+            <div class="flex-1">
+              <h2 class="text-sm font-bold text-slate-800 mb-3">待校对事项</h2>
+              <div class="space-y-2">
+                <div class="check-item">
+                  <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background:#FEF3C7">
+                      <svg style="width:14px;height:14px;color:#D97706" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                    </div>
+                    <div>
+                      <p class="text-xs font-semibold text-slate-700">责任人待确认</p>
+                      <p class="text-xs text-slate-400">共 2 条任务的责任人未确认</p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">2 条</span>
+                    <a href="#" class="text-xs text-blue-500 hover:text-blue-700 font-medium cursor-pointer">查看 &rsaquo;</a>
+                  </div>
+                </div>
+                <div class="check-item">
+                  <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background:#FEF3C7">
+                      <svg style="width:14px;height:14px;color:#D97706" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    </div>
+                    <div>
+                      <p class="text-xs font-semibold text-slate-700">截止时间待补充</p>
+                      <p class="text-xs text-slate-400">共 1 条任务的截止时间未补充</p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">1 条</span>
+                    <a href="#" class="text-xs text-blue-500 hover:text-blue-700 font-medium cursor-pointer">查看 &rsaquo;</a>
+                  </div>
+                </div>
+                <div class="check-item">
+                  <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background:#FEF3C7">
+                      <svg style="width:14px;height:14px;color:#D97706" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    </div>
+                    <div>
+                      <p class="text-xs font-semibold text-slate-700">决策事项待确认</p>
+                      <p class="text-xs text-slate-400">共 2 条决策事项请确认是否发布</p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">2 条</span>
+                    <a href="#" class="text-xs text-blue-500 hover:text-blue-700 font-medium cursor-pointer">查看 &rsaquo;</a>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 竖分隔 -->
+            <div class="w-px bg-slate-100 self-stretch"></div>
+
+            <!-- 操作按钮 -->
+            <div class="flex flex-col gap-3 justify-center" style="min-width:160px">
+              <button class="cursor-pointer flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-white text-sm font-bold transition-all hover:opacity-90 active:scale-95" style="background:linear-gradient(135deg,#0369A1,#0EA5E9);box-shadow:0 2px 8px rgba(3,105,161,0.3)">
+                <svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                校对发布
+              </button>
+              <button class="cursor-pointer flex items-center justify-center gap-2 px-5 py-3 rounded-xl border-2 border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 transition-colors">
+                <svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
+                退回修改
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── 会议记录列表 ── -->
+    <div class="card p-5">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-sm font-bold text-slate-800">会议记录列表</h2>
+        <span class="text-xs text-slate-400">共 5 条</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="border-b border-slate-100">
+              <th class="text-left text-slate-400 font-semibold pb-2.5 pr-4">会议名称</th>
+              <th class="text-left text-slate-400 font-semibold pb-2.5 pr-4">类型</th>
+              <th class="text-left text-slate-400 font-semibold pb-2.5 pr-4">日期</th>
+              <th class="text-left text-slate-400 font-semibold pb-2.5 pr-4">关联专项</th>
+              <th class="text-left text-slate-400 font-semibold pb-2.5 pr-4">纪要状态</th>
+              <th class="text-left text-slate-400 font-semibold pb-2.5">操作</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-50">
+            <tr class="bg-blue-50/40">
+              <td class="py-3 pr-4 font-semibold text-slate-800">五个AI升级专项周例会（第12周）</td>
+              <td class="py-3 pr-4"><span class="mt-tag mt-weekly">周例会</span></td>
+              <td class="py-3 pr-4 text-slate-500">2025-05-19 10:00</td>
+              <td class="py-3 pr-4">
+                <div class="flex items-center gap-1 flex-wrap">
+                  <span class="proj-dot" style="background:#2563EB"></span>
+                  <span class="proj-dot" style="background:#059669"></span>
+                  <span class="proj-dot" style="background:#F59E0B"></span>
+                  <span class="proj-dot" style="background:#8B5CF6"></span>
+                  <span class="proj-dot" style="background:#0891B2"></span>
+                  <span class="text-slate-400 ml-0.5">全部5个专项</span>
+                </div>
+              </td>
+              <td class="py-3 pr-4"><span class="badge s-draft">已生成（待校对）</span></td>
+              <td class="py-3">
+                <div class="flex items-center gap-2">
+                  <button class="cursor-pointer text-blue-500 hover:text-blue-700 font-medium">查看</button>
+                  <span class="text-slate-200">|</span>
+                  <button class="cursor-pointer text-slate-400 hover:text-slate-600 font-medium">编辑</button>
+                  <span class="text-slate-200">|</span>
+                  <button class="cursor-pointer text-slate-400 hover:text-slate-600 font-medium">下载</button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="py-3 pr-4 font-medium text-slate-700">知识库升级专项评审会</td>
+              <td class="py-3 pr-4"><span class="mt-tag mt-review">评审会</span></td>
+              <td class="py-3 pr-4 text-slate-500">2025-05-16 14:00</td>
+              <td class="py-3 pr-4"><div class="flex items-center gap-1"><span class="proj-dot" style="background:#2563EB"></span><span class="text-slate-500 ml-1">知识库升级专项</span></div></td>
+              <td class="py-3 pr-4"><span class="badge s-published">已发布</span></td>
+              <td class="py-3"><div class="flex items-center gap-2"><button class="cursor-pointer text-blue-500 hover:text-blue-700 font-medium">查看</button><span class="text-slate-200">|</span><button class="cursor-pointer text-slate-400 hover:text-slate-600 font-medium">编辑</button><span class="text-slate-200">|</span><button class="cursor-pointer text-slate-400 hover:text-slate-600 font-medium">下载</button></div></td>
+            </tr>
+            <tr>
+              <td class="py-3 pr-4 font-medium text-slate-700">超声产线AI化专项双周推进会</td>
+              <td class="py-3 pr-4"><span class="mt-tag mt-special">专项会</span></td>
+              <td class="py-3 pr-4 text-slate-500">2025-05-15 10:00</td>
+              <td class="py-3 pr-4"><div class="flex items-center gap-1"><span class="proj-dot" style="background:#059669"></span><span class="text-slate-500 ml-1">超声产线AI化专项</span></div></td>
+              <td class="py-3 pr-4"><span class="badge s-published">已发布</span></td>
+              <td class="py-3"><div class="flex items-center gap-2"><button class="cursor-pointer text-blue-500 hover:text-blue-700 font-medium">查看</button><span class="text-slate-200">|</span><button class="cursor-pointer text-slate-400 hover:text-slate-600 font-medium">编辑</button><span class="text-slate-200">|</span><button class="cursor-pointer text-slate-400 hover:text-slate-600 font-medium">下载</button></div></td>
+            </tr>
+            <tr>
+              <td class="py-3 pr-4 font-medium text-slate-700">交付流程AI化专项需求澄清会</td>
+              <td class="py-3 pr-4"><span class="mt-tag mt-discuss" style="background:#FFF1F2;color:#BE123C">澄清会</span></td>
+              <td class="py-3 pr-4 text-slate-500">2025-05-14 16:00</td>
+              <td class="py-3 pr-4"><div class="flex items-center gap-1"><span class="proj-dot" style="background:#F59E0B"></span><span class="text-slate-500 ml-1">交付流程AI化专项</span></div></td>
+              <td class="py-3 pr-4"><span class="badge s-published">已发布</span></td>
+              <td class="py-3"><div class="flex items-center gap-2"><button class="cursor-pointer text-blue-500 hover:text-blue-700 font-medium">查看</button><span class="text-slate-200">|</span><button class="cursor-pointer text-slate-400 hover:text-slate-600 font-medium">编辑</button><span class="text-slate-200">|</span><button class="cursor-pointer text-slate-400 hover:text-slate-600 font-medium">下载</button></div></td>
+            </tr>
+            <tr>
+              <td class="py-3 pr-4 font-medium text-slate-700">咨询服务产品化专项方案讨论会</td>
+              <td class="py-3 pr-4"><span class="mt-tag mt-discuss">讨论会</span></td>
+              <td class="py-3 pr-4 text-slate-500">2025-05-13 10:00</td>
+              <td class="py-3 pr-4"><div class="flex items-center gap-1"><span class="proj-dot" style="background:#8B5CF6"></span><span class="text-slate-500 ml-1">咨询服务产品化</span></div></td>
+              <td class="py-3 pr-4"><span class="badge s-published">已发布</span></td>
+              <td class="py-3"><div class="flex items-center gap-2"><button class="cursor-pointer text-blue-500 hover:text-blue-700 font-medium">查看</button><span class="text-slate-200">|</span><button class="cursor-pointer text-slate-400 hover:text-slate-600 font-medium">编辑</button><span class="text-slate-200">|</span><button class="cursor-pointer text-slate-400 hover:text-slate-600 font-medium">下载</button></div></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <!-- Pagination -->
+      <div class="flex items-center justify-between mt-4 pt-4 border-t border-slate-100">
+        <span class="text-xs text-slate-400">共 5 条</span>
+        <div class="flex items-center gap-1">
+          <button class="cursor-pointer w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-100 transition-colors disabled:opacity-30" disabled>
+            <svg style="width:13px;height:13px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+          </button>
+          <button class="cursor-pointer w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-bold" style="background:#0369A1">1</button>
+          <button class="cursor-pointer w-7 h-7 rounded-lg flex items-center justify-center text-slate-500 text-xs font-medium hover:bg-slate-100 transition-colors">
+            <svg style="width:13px;height:13px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </button>
+        </div>
+        <span class="text-xs text-slate-400">10 条/页</span>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+</body>
+</html>

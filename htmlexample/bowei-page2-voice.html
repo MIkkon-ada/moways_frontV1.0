@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>博维AI驾驶舱 · 语音更新</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; box-sizing: border-box; }
+  body { background: #F1F5F9; }
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 99px; }
+
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 14px;
+    border-radius: 8px; color: #94A3B8; font-size: 13.5px; font-weight: 500;
+    cursor: pointer; transition: all 0.18s; text-decoration: none;
+    border-left: 2px solid transparent;
+  }
+  .nav-item:hover { background: rgba(255,255,255,0.07); color: #E2E8F0; }
+  .nav-item.active { background: rgba(14,165,233,0.15); color: #38BDF8; border-left: 2px solid #0EA5E9; }
+
+  .card { background: #fff; border-radius: 14px; border: 1px solid #E9EFF6; box-shadow: 0 1px 4px rgba(15,23,42,0.06); }
+
+  /* Tab */
+  .tab-btn { padding: 8px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.18s; border: none; background: transparent; color: #64748B; }
+  .tab-btn.active { background: #0369A1; color: #fff; box-shadow: 0 2px 8px rgba(3,105,161,0.3); }
+  .tab-btn:not(.active):hover { background: #F1F5F9; color: #334155; }
+
+  /* Recording button */
+  @keyframes pulse-ring {
+    0%   { box-shadow: 0 0 0 0   rgba(239,68,68,0.4); }
+    70%  { box-shadow: 0 0 0 16px rgba(239,68,68,0); }
+    100% { box-shadow: 0 0 0 0   rgba(239,68,68,0); }
+  }
+  .rec-btn { animation: pulse-ring 2s ease-out infinite; }
+
+  /* Waveform bars */
+  @keyframes wave {
+    0%, 100% { height: 6px; }
+    50%       { height: 28px; }
+  }
+  .wave-bar { width: 3px; border-radius: 99px; background: #0EA5E9; display: inline-block; animation: wave 1s ease-in-out infinite; }
+
+  /* Confidence meter */
+  .conf-bar { height: 6px; border-radius: 99px; background: #E2E8F0; overflow: hidden; }
+  .conf-fill { height: 100%; border-radius: 99px; }
+
+  /* Status badges */
+  .badge { display:inline-flex; align-items:center; padding:2px 9px; border-radius:20px; font-size:11.5px; font-weight:600; }
+  .s-done    { background:#D1FAE5; color:#065F46; }
+  .s-pending { background:#FEF3C7; color:#92400E; }
+  .s-back    { background:#FEE2E2; color:#991B1B; }
+
+  /* Field row */
+  .field-row { display:flex; align-items:flex-start; padding: 10px 0; border-bottom: 1px solid #F1F5F9; }
+  .field-row:last-child { border-bottom: none; }
+  .field-label { width: 90px; flex-shrink: 0; font-size: 12px; font-weight: 600; color: #64748B; padding-top: 2px; }
+  .field-value { flex: 1; font-size: 13px; color: #1E293B; line-height: 1.6; }
+  .field-edit { margin-left: 8px; flex-shrink:0; padding: 2px; border-radius: 4px; color: #94A3B8; cursor: pointer; transition: color 0.15s; }
+  .field-edit:hover { color: #0369A1; }
+
+  /* Table */
+  tbody tr { transition: background 0.12s; cursor: default; }
+  tbody tr:hover { background: #F8FAFC; }
+
+  @keyframes fadeUp { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  .fade-up { animation: fadeUp 0.35s ease both; }
+
+  @media (prefers-reduced-motion: reduce) { * { animation:none!important; transition:none!important; } }
+</style>
+</head>
+<body class="flex h-screen overflow-hidden">
+
+<!-- ═══════ SIDEBAR ═══════ -->
+<aside class="w-56 flex-shrink-0 flex flex-col overflow-hidden" style="background:#0F172A">
+  <div class="flex items-center gap-3 px-5 h-16 border-b flex-shrink-0" style="border-color:rgba(255,255,255,0.08)">
+    <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background:linear-gradient(135deg,#0EA5E9,#0369A1)">
+      <svg style="width:18px;height:18px" class="text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+    </div>
+    <div>
+      <div class="text-white text-sm font-bold tracking-tight leading-none">博维 AI</div>
+      <div class="text-slate-500 text-xs mt-0.5">升级项目驾驶舱</div>
+    </div>
+  </div>
+  <nav class="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+    <a class="nav-item" href="bowei-page1-dashboard.html">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+      首页驾驶舱
+    </a>
+    <a class="nav-item active" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+      语音更新
+    </a>
+    <a class="nav-item" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+      会议纪要
+    </a>
+    <a class="nav-item" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      AI 确认中心
+      <span class="ml-auto bg-orange-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none">6</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+      工作推进表
+    </a>
+    <div class="pt-4 pb-1 px-2"><div class="text-slate-600 font-semibold uppercase" style="font-size:10px;letter-spacing:0.1em">资源库</div></div>
+    <a class="nav-item" href="#"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>成果库</a>
+    <a class="nav-item" href="#"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>问题与决策</a>
+    <a class="nav-item" href="#"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>组织与分工</a>
+    <a class="nav-item" href="#"><svg style="width:16px;height:16px;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>系统设置</a>
+  </nav>
+  <div class="px-4 py-3 border-t flex items-center gap-3 flex-shrink-0" style="border-color:rgba(255,255,255,0.08)">
+    <div class="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0" style="background:linear-gradient(135deg,#3B82F6,#0369A1)">冯</div>
+    <div class="flex-1 min-w-0">
+      <div class="text-white text-sm font-semibold truncate">冯海林</div>
+      <div class="text-slate-500 text-xs truncate">总经理 · 管理员</div>
+    </div>
+  </div>
+</aside>
+
+<!-- ═══════ MAIN ═══════ -->
+<div class="flex-1 flex flex-col overflow-hidden">
+
+  <!-- Top Bar -->
+  <header class="h-16 flex items-center px-6 gap-4 flex-shrink-0 bg-white border-b" style="border-color:#E9EFF6">
+    <div class="flex-1">
+      <h1 class="text-base font-bold text-slate-800">语音更新</h1>
+      <p class="text-xs text-slate-400 mt-0.5">通过录音、上传音频或粘贴文字，快速生成项目进度更新建议</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <button class="cursor-pointer relative p-2 rounded-lg hover:bg-slate-100 transition-colors">
+        <svg style="width:18px;height:18px;color:#64748B" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+        <span class="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <main class="flex-1 overflow-y-auto p-6 fade-up">
+    <div class="grid grid-cols-5 gap-5 h-full">
+
+      <!-- ── LEFT: Recorder ── -->
+      <div class="col-span-2 flex flex-col gap-5">
+
+        <!-- Input type tabs -->
+        <div class="card p-1.5 flex gap-1">
+          <button class="tab-btn active flex-1 flex items-center justify-center gap-2">
+            <svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+            录音输入
+          </button>
+          <button class="tab-btn flex-1 flex items-center justify-center gap-2">
+            <svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+            上传音频
+          </button>
+          <button class="tab-btn flex-1 flex items-center justify-center gap-2">
+            <svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            粘贴文字
+          </button>
+        </div>
+
+        <!-- Recorder card -->
+        <div class="card p-6 flex flex-col items-center">
+          <!-- Status -->
+          <div class="flex items-center gap-2 mb-5">
+            <span class="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" style="animation:pulse-ring 1.5s infinite"></span>
+            <span class="text-sm font-semibold text-red-500">正在录音…</span>
+          </div>
+
+          <!-- Timer -->
+          <div class="text-5xl font-bold text-slate-800 tracking-tighter mb-5">00:48</div>
+
+          <!-- Waveform -->
+          <div class="flex items-end gap-1 h-10 mb-6" id="waveform">
+            <!-- generated by JS -->
+          </div>
+
+          <!-- Big record button -->
+          <button class="rec-btn w-16 h-16 rounded-full bg-red-500 flex items-center justify-center text-white cursor-pointer hover:bg-red-600 transition-colors mb-5" aria-label="录音">
+            <svg style="width:28px;height:28px" fill="currentColor" viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+          </button>
+
+          <!-- Controls -->
+          <div class="flex items-center gap-3">
+            <button class="cursor-pointer flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-semibold transition-colors">
+              <svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              暂停
+            </button>
+            <button class="cursor-pointer flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-500 text-sm font-medium transition-colors">
+              <svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              重新录制
+            </button>
+          </div>
+        </div>
+
+        <!-- Guiding questions -->
+        <div class="card p-5">
+          <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">请围绕以下问题进行说明</h3>
+          <div class="space-y-2.5">
+            <div class="flex items-start gap-3">
+              <span class="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 mt-0.5" style="background:#0369A1">1</span>
+              <span class="text-sm text-slate-700">本周完成了什么？</span>
+            </div>
+            <div class="flex items-start gap-3">
+              <span class="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 mt-0.5" style="background:#0369A1">2</span>
+              <span class="text-sm text-slate-700">形成了什么成果？</span>
+            </div>
+            <div class="flex items-start gap-3">
+              <span class="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 mt-0.5" style="background:#0369A1">3</span>
+              <span class="text-sm text-slate-700">当前有什么问题？</span>
+            </div>
+            <div class="flex items-start gap-3">
+              <span class="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 mt-0.5" style="background:#0369A1">4</span>
+              <span class="text-sm text-slate-700">下周做什么，需要谁协调？</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── RIGHT: AI Results ── -->
+      <div class="col-span-3 flex flex-col gap-5">
+
+        <!-- AI提取结果预览 -->
+        <div class="card p-5 flex-1">
+          <div class="flex items-center justify-between mb-1">
+            <div class="flex items-center gap-2">
+              <div class="w-6 h-6 rounded-md flex items-center justify-center" style="background:linear-gradient(135deg,#6366F1,#0EA5E9)">
+                <svg style="width:12px;height:12px;color:white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+              </div>
+              <h2 class="text-sm font-bold text-slate-800">AI 提取结果预览</h2>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-slate-400">来源：语音更新</span>
+              <span class="text-xs text-slate-300">|</span>
+              <span class="text-xs text-slate-400">提交时间：2025-05-16 16:42</span>
+              <button class="cursor-pointer ml-1 flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 font-medium transition-colors">
+                <svg style="width:12px;height:12px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                编辑全部
+              </button>
+            </div>
+          </div>
+
+          <!-- AI notice -->
+          <div class="flex items-center gap-2 px-3 py-2 rounded-lg mb-4 mt-3" style="background:#FFF7ED;border:1px solid #FED7AA">
+            <svg style="width:14px;height:14px;color:#D97706;flex-shrink:0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <span class="text-xs text-amber-700 font-medium">AI 仅生成更新建议，需负责人确认后写入</span>
+          </div>
+
+          <!-- Fields -->
+          <div class="divide-y divide-slate-50">
+            <div class="field-row">
+              <span class="field-label">专项</span>
+              <span class="field-value font-medium" style="color:#0369A1">知识库AI化</span>
+              <button class="field-edit" aria-label="编辑专项"><svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></button>
+            </div>
+            <div class="field-row">
+              <span class="field-label">任务</span>
+              <span class="field-value">提升知识库检索准确率</span>
+              <button class="field-edit" aria-label="编辑任务"><svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></button>
+            </div>
+            <div class="field-row">
+              <span class="field-label">完成事项</span>
+              <span class="field-value text-slate-600">完成RAG索引流程优化与向量化策略调整</span>
+              <button class="field-edit" aria-label="编辑完成事项"><svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></button>
+            </div>
+            <div class="field-row">
+              <span class="field-label">成果</span>
+              <span class="field-value">
+                <span class="inline-flex items-center gap-1 text-emerald-700 font-semibold">
+                  <svg style="width:12px;height:12px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+                  RAG检索准确率提升至78%，平均响应时间降低18%
+                </span>
+              </span>
+              <button class="field-edit" aria-label="编辑成果"><svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></button>
+            </div>
+            <div class="field-row">
+              <span class="field-label">问题</span>
+              <span class="field-value text-amber-700">低频长尾问题召回率仍偏低，相关语料不足</span>
+              <button class="field-edit" aria-label="编辑问题"><svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></button>
+            </div>
+            <div class="field-row">
+              <span class="field-label">下周计划</span>
+              <span class="field-value text-slate-600">补充长尾问题语料，优化召回调度策略</span>
+              <button class="field-edit" aria-label="编辑下周计划"><svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></button>
+            </div>
+            <div class="field-row">
+              <span class="field-label">需协调人</span>
+              <div class="field-value flex items-center gap-2 flex-wrap">
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100">
+                  <div class="w-4 h-4 rounded-full bg-blue-500 text-white text-xs flex items-center justify-center font-bold">数</div>
+                  数据团队 · 刘洋
+                </span>
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-violet-50 text-violet-700 border border-violet-100">
+                  <div class="w-4 h-4 rounded-full bg-violet-500 text-white text-xs flex items-center justify-center font-bold">算</div>
+                  算法团队 · 张伟
+                </span>
+              </div>
+              <button class="field-edit" aria-label="编辑协调人"><svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></button>
+            </div>
+            <div class="field-row">
+              <span class="field-label">状态建议</span>
+              <span class="field-value flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0"></span>
+                <span class="font-medium text-blue-700">进行中</span>
+                <span class="text-slate-400 text-xs">（建议保持当前计划）</span>
+              </span>
+              <button class="field-edit" aria-label="编辑状态"><svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></button>
+            </div>
+            <!-- Confidence -->
+            <div class="field-row">
+              <span class="field-label">置信度</span>
+              <div class="field-value flex items-center gap-3">
+                <span class="text-2xl font-bold" style="color:#059669">86%</span>
+                <div class="flex-1 max-w-40">
+                  <div class="conf-bar">
+                    <div class="conf-fill" style="width:86%;background:linear-gradient(90deg,#059669,#34D399)"></div>
+                  </div>
+                </div>
+                <span class="text-xs text-slate-400">可信度高</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 关联与确认 -->
+        <div class="card p-5">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-sm font-bold text-slate-800">关联与确认</h2>
+            <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-amber-600 font-semibold" style="background:#FFF7ED">
+              <svg style="width:12px;height:12px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+              AI 仅生成更新建议，需负责人确认后写入
+            </div>
+          </div>
+          <div class="grid grid-cols-3 gap-4 mb-4">
+            <div>
+              <label class="block text-xs font-semibold text-slate-500 mb-1.5">关联任务</label>
+              <select class="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400">
+                <option>知识库检索与问答优化</option>
+                <option>RAG流程优化</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-500 mb-1.5">负责人</label>
+              <select class="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400">
+                <option>李明</option><option>王雪</option><option>张伟</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-500 mb-1.5">确认状态</label>
+              <select class="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400">
+                <option>待确认</option><option>已确认</option><option>已退回</option>
+              </select>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <button class="cursor-pointer flex-1 py-2.5 rounded-lg border-2 border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 transition-colors">
+              保存草稿
+            </button>
+            <button class="cursor-pointer flex-1 py-2.5 rounded-lg text-white text-sm font-bold transition-all hover:opacity-90 active:scale-95" style="background:linear-gradient(135deg,#0369A1,#0EA5E9);box-shadow:0 2px 8px rgba(3,105,161,0.3)">
+              提交确认
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 最近提交记录 -->
+    <div class="card mt-5 p-5">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-sm font-bold text-slate-800">最近提交记录</h2>
+        <a href="#" class="text-xs text-blue-500 hover:text-blue-700 font-medium cursor-pointer">查看全部 →</a>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="border-b border-slate-100">
+              <th class="text-left text-slate-400 font-semibold pb-2.5 pr-4">提交人</th>
+              <th class="text-left text-slate-400 font-semibold pb-2.5 pr-4">日期</th>
+              <th class="text-left text-slate-400 font-semibold pb-2.5 pr-4">输入方式</th>
+              <th class="text-left text-slate-400 font-semibold pb-2.5 pr-4">关联专项</th>
+              <th class="text-left text-slate-400 font-semibold pb-2.5 pr-4">确认状态</th>
+              <th class="text-left text-slate-400 font-semibold pb-2.5">操作</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-50">
+            <tr>
+              <td class="py-3 pr-4"><div class="flex items-center gap-2"><div class="w-6 h-6 rounded-full bg-blue-100 text-blue-600 font-bold flex items-center justify-center text-xs">李</div><span class="text-slate-700 font-medium">李明</span></div></td>
+              <td class="py-3 pr-4 text-slate-500">2025-05-19 16:42</td>
+              <td class="py-3 pr-4">
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-blue-50 text-blue-600">
+                  <svg style="width:10px;height:10px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+                  录音输入
+                </span>
+              </td>
+              <td class="py-3 pr-4 text-slate-600">知识库平台AI化</td>
+              <td class="py-3 pr-4"><span class="badge s-done">已确认</span></td>
+              <td class="py-3">
+                <div class="flex items-center gap-2">
+                  <button class="cursor-pointer text-blue-500 hover:text-blue-700 font-medium transition-colors">查看</button>
+                  <span class="text-slate-200">|</span>
+                  <button class="cursor-pointer text-slate-400 hover:text-slate-600 font-medium transition-colors">编辑</button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="py-3 pr-4"><div class="flex items-center gap-2"><div class="w-6 h-6 rounded-full bg-violet-100 text-violet-600 font-bold flex items-center justify-center text-xs">王</div><span class="text-slate-700 font-medium">王雪</span></div></td>
+              <td class="py-3 pr-4 text-slate-500">2025-05-18 15:18</td>
+              <td class="py-3 pr-4">
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-slate-50 text-slate-600">
+                  <svg style="width:10px;height:10px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+                  上传音频
+                </span>
+              </td>
+              <td class="py-3 pr-4 text-slate-600">数据中台AI化</td>
+              <td class="py-3 pr-4"><span class="badge s-pending">待确认</span></td>
+              <td class="py-3">
+                <div class="flex items-center gap-2">
+                  <button class="cursor-pointer text-blue-500 hover:text-blue-700 font-medium transition-colors">查看</button>
+                  <span class="text-slate-200">|</span>
+                  <button class="cursor-pointer text-slate-400 hover:text-slate-600 font-medium transition-colors">编辑</button>
+                  <span class="text-slate-200">|</span>
+                  <button class="cursor-pointer text-red-400 hover:text-red-600 font-medium transition-colors">删除</button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="py-3 pr-4"><div class="flex items-center gap-2"><div class="w-6 h-6 rounded-full bg-emerald-100 text-emerald-600 font-bold flex items-center justify-center text-xs">张</div><span class="text-slate-700 font-medium">张伟</span></div></td>
+              <td class="py-3 pr-4 text-slate-500">2025-05-17 11:30</td>
+              <td class="py-3 pr-4">
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-emerald-50 text-emerald-600">
+                  <svg style="width:10px;height:10px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                  粘贴文字
+                </span>
+              </td>
+              <td class="py-3 pr-4 text-slate-600">交付流程AI化</td>
+              <td class="py-3 pr-4"><span class="badge s-back">已退回</span></td>
+              <td class="py-3">
+                <div class="flex items-center gap-2">
+                  <button class="cursor-pointer text-blue-500 hover:text-blue-700 font-medium transition-colors">查看</button>
+                  <span class="text-slate-200">|</span>
+                  <button class="cursor-pointer text-slate-400 hover:text-slate-600 font-medium transition-colors">编辑</button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="py-3 pr-4"><div class="flex items-center gap-2"><div class="w-6 h-6 rounded-full bg-amber-100 text-amber-600 font-bold flex items-center justify-center text-xs">刘</div><span class="text-slate-700 font-medium">刘涛</span></div></td>
+              <td class="py-3 pr-4 text-slate-500">2025-05-16 09:55</td>
+              <td class="py-3 pr-4">
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-blue-50 text-blue-600">
+                  <svg style="width:10px;height:10px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+                  录音输入
+                </span>
+              </td>
+              <td class="py-3 pr-4 text-slate-600">智能分析平台搭建</td>
+              <td class="py-3 pr-4"><span class="badge s-done">已确认</span></td>
+              <td class="py-3">
+                <div class="flex items-center gap-2">
+                  <button class="cursor-pointer text-blue-500 hover:text-blue-700 font-medium transition-colors">查看</button>
+                  <span class="text-slate-200">|</span>
+                  <button class="cursor-pointer text-slate-400 hover:text-slate-600 font-medium transition-colors">编辑</button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+// Generate waveform bars
+const waveform = document.getElementById('waveform');
+const heights = [8,14,22,18,28,12,24,20,16,26,10,28,22,14,20,28,16,24,10,18,26,12,20,28,16,22,8,24,18,14,26,20];
+heights.forEach((h, i) => {
+  const bar = document.createElement('div');
+  bar.className = 'wave-bar';
+  bar.style.animationDelay = (i * 0.06) + 's';
+  bar.style.height = h + 'px';
+  waveform.appendChild(bar);
+});
+</script>
+</body>
+</html>
