@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getPending, confirmSubmission, rejectSubmission, transferCoordinator, escalateCeo } from '../api/confirmations'
-import { deleteUpdate } from '../api/updates'
+import { deleteUpdate, fetchMyUpdates } from '../api/updates'
 import { useProject } from '../context/ProjectContext'
 import type { ConfirmationItem } from '../types'
 import { fmtFull, fmtShort } from '../utils/time'
+import * as SS from '../domain/submissionStatus'
 
 function fmtTime(s?: string | null) { return fmtFull(s) }
 
@@ -45,17 +46,12 @@ function SourceBadge({ type }: { type?: string }) {
 }
 
 function StatusBadge({ status }: { status?: string }) {
-  const map: Record<string, string> = {
-    '待确认':    'bg-amber-100 text-amber-700',
-    '已确认':    'bg-emerald-100 text-emerald-700',
-    '已入库':    'bg-emerald-100 text-emerald-700',
-    '已驳回':    'bg-red-100 text-red-700',
-    '已转交统筹': 'bg-purple-100 text-purple-700',
-    '待CEO决策': 'bg-blue-100 text-blue-700',
-  }
+  const norm = SS.normalize(status)
+  const cls = SS.STATUS_BADGE_CLASS[norm] ?? 'bg-slate-100 text-slate-600'
+  const label = SS.DISPLAY_LABEL[norm] ?? (status ?? '-')
   return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${map[status ?? ''] ?? 'bg-slate-100 text-slate-600'}`}>
-      {status ?? '-'}
+    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${cls}`}>
+      {label}
     </span>
   )
 }
@@ -79,7 +75,7 @@ function Ava({ name }: { name: string }) {
 
 export function ConfirmPage() {
   const navigate = useNavigate()
-  const { currentProjectId, currentUser, projects, currentProjectRoles } = useProject()
+  const { currentProjectId, currentUser, projects, currentCapabilities } = useProject()
   const [items, setItems] = useState<ConfirmationItem[]>([])
   const [selected, setSelected] = useState<ConfirmationItem | null>(null)
   const [loading, setLoading] = useState(false)
@@ -87,10 +83,12 @@ export function ConfirmPage() {
   const [pendingAction, setPendingAction] = useState<'reject' | 'supplement' | 'forward' | 'ceo' | null>(null)
   const [actionNote, setActionNote] = useState('')
 
-  // 判断是否为审核者（负责人/统筹人/CEO/管理员）
-  const isReviewer = currentProjectRoles.some(r => ['owner', 'coordinator', 'project_ceo'].includes(r))
-    || (currentUser as any)?.is_admin
-    || ['超级管理员', '组长CEO'].includes((currentUser as any)?.system_role ?? '')
+  // Backend-authoritative: can this user act as a reviewer in this project?
+  const isReviewer = !!(
+    currentCapabilities?.canConfirm ||
+    currentCapabilities?.canCoordinate ||
+    currentCapabilities?.canCeoDecide
+  )
   // 默认视图：审核者看全部（审核队列），普通成员看自己的
   const [viewMode, setViewMode] = useState<'mine' | 'all'>('mine')
   useEffect(() => {
@@ -113,20 +111,36 @@ export function ConfirmPage() {
   const [editStatus, setEditStatus] = useState('进行中')
 
   useEffect(() => {
-    if (!currentProjectId) return
     let cancelled = false
     setLoading(true)
-    getPending(currentProjectId)
-      .then((d) => {
-        if (!cancelled) {
-          setItems(d)
-          if (d.length > 0) pickItem(d[0])
-        }
-      })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setLoading(false) })
+    setSelected(null)
+    setItems([])
+
+    if (viewMode === 'mine') {
+      fetchMyUpdates()
+        .then((d) => {
+          if (!cancelled) {
+            const mapped = d as unknown as ConfirmationItem[]
+            setItems(mapped)
+            if (mapped.length > 0) pickItem(mapped[0])
+          }
+        })
+        .catch(() => {})
+        .finally(() => { if (!cancelled) setLoading(false) })
+    } else {
+      // 不传 project_id：让后端返回用户有权审核的全部提交，前端用专项下拉二次筛选
+      getPending(null)
+        .then((d) => {
+          if (!cancelled) {
+            setItems(d)
+            if (d.length > 0) pickItem(d[0])
+          }
+        })
+        .catch(() => {})
+        .finally(() => { if (!cancelled) setLoading(false) })
+    }
     return () => { cancelled = true }
-  }, [currentProjectId])
+  }, [currentProjectId, viewMode])
 
   function getAIResult(item: ConfirmationItem): Record<string, unknown> | null {
     try {
@@ -151,12 +165,23 @@ export function ConfirmPage() {
       const base = getAIResult(selected) || {}
       const taskBase = (base.task as Record<string, unknown>) || {}
 
+      // 语音更新的 AI 结果没有 task.key_task，用 related_task 补填
+      const keyTask = String(taskBase.key_task || base.related_task || base.summary || '')
+      const keyAchievement = String(
+        taskBase.key_achievement ||
+        (Array.isArray(base.completed_items)
+          ? (base.completed_items as string[]).join('；')
+          : (base.completed_items || ''))
+      )
+
       // 把 UI 上的修改和入库开关打包进 human_result
       const humanResult: Record<string, unknown> = {
         ...base,
         special_project: editProject,
         task: {
           ...taskBase,
+          key_task: keyTask,
+          key_achievement: keyAchievement,
           special_project: editProject,
           status: editStatus,
           write_task: writeToTasks,
@@ -172,7 +197,7 @@ export function ConfirmPage() {
       }
 
       await confirmSubmission(selected.id, currentUser.name, humanResult)
-      const updated = { ...selected, confirm_status: '已入库' }
+      const updated = { ...selected, confirm_status: SS.S_CONFIRMED }
       setItems((prev) => prev.map((i) => i.id === selected.id ? updated : i))
       setSelected(updated)
     } finally { setActing(false) }
@@ -183,9 +208,7 @@ export function ConfirmPage() {
   const allSubmitters = [...new Set(items.map((i) => i.submitter).filter(Boolean))]
 
   const visibleItems = items.filter((item) => {
-    // 我的提交视角：只看自己提交的
-    if (viewMode === 'mine' && item.submitter !== currentUser?.name) return false
-    if (filterStatus && item.confirm_status !== filterStatus) return false
+    if (filterStatus && SS.normalize(item.confirm_status) !== filterStatus) return false
     if (filterProject && item.special_project !== filterProject) return false
     if (filterSubmitter && item.submitter !== filterSubmitter) return false
     if (search) {
@@ -199,7 +222,7 @@ export function ConfirmPage() {
     return true
   })
 
-  const opLogs = items.filter((i) => i.confirm_status !== '待确认').slice(0, 5)
+  const opLogs = items.filter((i) => SS.normalize(i.confirm_status) !== SS.S_NEW).slice(0, 5)
   const selectedResult = selected ? getAIResult(selected) : null
 
   const dfields: { key: string; label: string; colorFn?: (v: string) => string }[] = [
@@ -236,7 +259,10 @@ export function ConfirmPage() {
           )}
         </div>
         <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30">
-          <option value="">全部状态</option><option>待确认</option><option>已确认</option><option>已驳回</option>
+          <option value="">全部状态</option>
+          <option value={SS.S_NEW}>待确认</option>
+          <option value={SS.S_CONFIRMED}>已入库</option>
+          <option value={SS.S_RETURNED}>已退回</option>
         </select>
         <select value={filterProject} onChange={(e) => setFilterProject(e.target.value)} className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30">
           <option value="">全部专项</option>
@@ -461,13 +487,13 @@ export function ConfirmPage() {
 
                 {/* Actions */}
                 <div className="px-5 py-4 border-t flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
-                  {selected.confirm_status !== '待确认' ? (
+                  {SS.normalize(selected.confirm_status) !== SS.S_NEW ? (
                     <div className="py-2.5 text-center text-sm font-semibold text-slate-400">
-                      {(selected.confirm_status === '已确认' || selected.confirm_status === '已入库')
+                      {SS.CONFIRMED_AND_STORED.has(SS.normalize(selected.confirm_status))
                         ? '✓ 已写入工作推进表 / 成果库'
-                        : selected.confirm_status === '已转交统筹'
+                        : SS.WAITING_COORDINATOR_FEEDBACK.has(SS.normalize(selected.confirm_status))
                           ? '↗ 已转交统筹人处理'
-                          : selected.confirm_status === '待CEO决策'
+                          : SS.WAITING_CEO_DECISION.has(SS.normalize(selected.confirm_status))
                             ? '↑ 已上报CEO，等待决策'
                             : '✗ 已退回，等待重新提交'}
                     </div>
@@ -522,17 +548,17 @@ export function ConfirmPage() {
                             if (!selected || !currentUser) return
                             setActing(true)
                             try {
-                              let newStatus = '已驳回'
+                              let newStatus = SS.S_RETURNED
                               if (pendingAction === 'reject') {
                                 await rejectSubmission(selected.id, actionNote, currentUser.name)
                               } else if (pendingAction === 'supplement') {
                                 await rejectSubmission(selected.id, `[待补充] ${actionNote}`, currentUser.name)
                               } else if (pendingAction === 'forward') {
                                 await transferCoordinator(selected.id, actionNote, currentUser.name)
-                                newStatus = '已转交统筹'
+                                newStatus = SS.S_WAITING_COORDINATOR
                               } else if (pendingAction === 'ceo') {
                                 await escalateCeo(selected.id, actionNote, currentUser.name)
-                                newStatus = '待CEO决策'
+                                newStatus = SS.S_WAITING_CEO
                               }
                               const updated = { ...selected, confirm_status: newStatus }
                               setItems((prev) => prev.map((i) => i.id === selected.id ? updated : i))
@@ -604,7 +630,7 @@ export function ConfirmPage() {
                   {opLogs.map((item) => {
                     const r = getAIResult(item)
                     const summary = String(r?.summary || item.title || '').slice(0, 30)
-                    const isDone = item.confirm_status === '已确认' || item.confirm_status === '已入库'
+                    const isDone = SS.CONFIRMED_AND_STORED.has(SS.normalize(item.confirm_status))
                     return (
                       <tr key={item.id} className="border-b hover:bg-slate-50 transition-colors" style={{ borderColor: '#F8FAFC' }}>
                         <td className="py-2.5 px-5">

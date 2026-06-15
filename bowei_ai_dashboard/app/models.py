@@ -32,7 +32,15 @@ class Task(Base, TimestampMixin):
     achievement_links = Column(Text, default="")
     source_type = Column(String(40), default="人工录入")
     submitter = Column(String(50), default="")
+    confirmed_by = Column(String(50), default="")
     confirmed_at = Column(DateTime, nullable=True)
+    source_submission_id = Column(Integer, nullable=True, index=True)
+    edit_count = Column(Integer, default=0)
+    is_deleted = Column(Boolean, default=False, index=True)
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by = Column(String(50), default="")
+    delete_reason = Column(Text, default="")
+    delete_batch_id = Column(String(64), default="", index=True)
 
 
 class UpdateSubmission(Base, TimestampMixin):
@@ -91,7 +99,10 @@ class Achievement(Base, TimestampMixin):
     reuse_tag = Column(String(80), default="")
     status = Column(String(20), default="草稿", index=True)
     source_type = Column(String(40), default="人工录入")
+    confirmed_by = Column(String(50), default="")
     confirmed_at = Column(DateTime, nullable=True)
+    source_submission_id = Column(Integer, nullable=True, index=True)
+    edit_count = Column(Integer, default=0)
 
 
 class Issue(Base, TimestampMixin):
@@ -112,6 +123,9 @@ class Issue(Base, TimestampMixin):
     related_task_id = Column(Integer, ForeignKey("tasks.id"), nullable=True)
     special_project = Column(String(80), index=True)
     source_type = Column(String(40), default="人工录入")
+    confirmed_by = Column(String(50), default="")
+    source_submission_id = Column(Integer, nullable=True, index=True)
+    edit_count = Column(Integer, default=0)
 
 
 class Project(Base, TimestampMixin):
@@ -119,6 +133,11 @@ class Project(Base, TimestampMixin):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False, unique=True, index=True)
+    code = Column(String(50), default="")
+    description = Column(Text, default="")
+    status = Column(String(20), default="active", index=True)
+    start_date = Column(String(20), default="")
+    end_date = Column(String(20), default="")
     coordinator = Column(String(50), default="")
     owners = Column(String(200), default="")
     collaborators = Column(Text, default="")
@@ -157,6 +176,7 @@ class OperationLog(Base, TimestampMixin):
     action = Column(String(80), default="")
     target_type = Column(String(40), default="")
     target_id = Column(Integer, nullable=True)
+    note = Column(Text, default="")
     before_json = Column(Text, default="")
     after_json = Column(Text, default="")
 
@@ -182,6 +202,12 @@ class SubTask(Base, TimestampMixin):
     status = Column(String(20), default="未开始", index=True)
     completion_criteria = Column(Text, default="")
     notes = Column(Text, default="")
+    is_deleted = Column(Boolean, default=False, index=True)
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by = Column(String(50), default="")
+    delete_reason = Column(Text, default="")
+    delete_batch_id = Column(String(64), default="", index=True)
+    deleted_by_parent_id = Column(Integer, nullable=True, index=True)
 
 
 class ProjectMember(Base, TimestampMixin):

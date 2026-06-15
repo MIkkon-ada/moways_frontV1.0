@@ -13,9 +13,16 @@ export type TaskItem = {
   achievement_links: string
   source_type: string
   submitter?: string
+  confirmed_by?: string
+  confirmed_at?: string | null
+  edit_count?: number
+  is_deleted?: boolean
+  deleted_at?: string | null
+  deleted_by?: string
+  delete_reason?: string
+  delete_batch_id?: string
   created_at?: string
   updated_at?: string
-  confirmed_at?: string | null
 }
 
 export type TaskFilters = {
@@ -59,8 +66,23 @@ export type Project = {
   is_active: boolean
   start_date?: string
   end_date?: string
+  coordinator?: string
+  owners?: string[]
+  collaborators?: string[]
   user_roles: string[]           // 当前用户在该项目的角色：owner/coordinator/member/project_ceo/super_admin
   member_counts: Record<string, number>
+}
+
+// GET /api/projects/{id}/capabilities
+export type ProjectCapabilities = {
+  roles: string[]
+  canSubmit: boolean
+  canConfirm: boolean
+  canCoordinate: boolean
+  canEscalateToCEO: boolean
+  canCeoDecide: boolean
+  canViewCenter: boolean
+  pendingCount: number
 }
 
 // GET /api/projects/{id}/members
@@ -100,7 +122,7 @@ export type DashboardOverview = {
     returned_submissions?: number | null
     confirmed_submissions?: number
   }
-  ceo_decision_stats?: { pending_ceo_decisions?: number; decided_items?: number }
+  ceo_decision_stats?: { pending_ceo_decisions?: number; ceo_decided_awaiting_owner?: number }
   recent?: {
     submissions?: Array<Record<string, unknown>>
     tasks?: Array<Record<string, unknown>>
@@ -188,6 +210,12 @@ export type SubTaskItem = {
   status: string
   completion_criteria?: string
   notes?: string
+  is_deleted?: boolean
+  deleted_at?: string | null
+  deleted_by?: string
+  delete_reason?: string
+  delete_batch_id?: string
+  deleted_by_parent_id?: number | null
   created_at?: string
   updated_at?: string
 }

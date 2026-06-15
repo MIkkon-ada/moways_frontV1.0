@@ -1,4 +1,5 @@
-import { Routes, Route } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import { useProject } from '../context/ProjectContext'
 import { RequireAuth } from './guards/RequireAuth'
 import { RequireProject } from './guards/RequireProject'
@@ -8,7 +9,7 @@ import {
   RootRedirect,
   CenterMessage,
 } from '../layouts/AppLayout'
-import { ProjectLayout } from '../layouts/ProjectLayout'
+import { ProjectLayout, NoProjectHome } from '../layouts/ProjectLayout'
 import { AdminLayout } from '../layouts/AdminLayout'
 import { DashboardPage } from '../pages/DashboardPage'
 import { ConfirmPage } from '../pages/ConfirmPage'
@@ -22,17 +23,54 @@ import { DecisionPage } from '../pages/DecisionPage'
 import { SettingsPage } from '../pages/SettingsPage'
 import { ProjectAdminPage } from '../pages/ProjectAdminPage'
 import { ProjectMembersPage } from '../pages/ProjectMembersPage'
+import { SetupPage } from '../pages/SetupPage'
+
+function HomeIndex() {
+  const { currentUser } = useProject()
+  return <NoProjectHome isAdmin={!!currentUser?.is_tech_admin} />
+}
+
+type SetupState = 'loading' | 'needed' | 'done'
 
 export function AppRoutes() {
   const { authState } = useProject()
+  const [setupState, setSetupState] = useState<SetupState>('loading')
 
-  if (authState === 'loading') {
+  useEffect(() => {
+    fetch('/api/setup/status')
+      .then((r) => r.json())
+      .then((d) => setSetupState(d.initialized ? 'done' : 'needed'))
+      .catch(() => setSetupState('done'))
+  }, [])
+
+  if (setupState === 'loading' || authState === 'loading') {
     return <CenterMessage title="加载中..." />
+  }
+
+  if (setupState === 'needed') {
+    return (
+      <Routes>
+        <Route path="/setup" element={<SetupPage />} />
+        <Route path="*" element={<Navigate to="/setup" replace />} />
+      </Routes>
+    )
   }
 
   return (
     <Routes>
+      <Route path="/setup" element={<Navigate to="/login" replace />} />
       <Route path="/login" element={<LoginRoute />} />
+      <Route
+        path="/home"
+        element={
+          <RequireAuth>
+            <ProjectLayout />
+          </RequireAuth>
+        }
+      >
+        <Route index element={<HomeIndex />} />
+        <Route path="settings" element={<SettingsPage />} />
+      </Route>
       <Route
         path="/projects"
         element={

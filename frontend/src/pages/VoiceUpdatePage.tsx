@@ -4,6 +4,7 @@ import type { UpdateDetail, UpdateHistoryItem } from '../api/updates'
 import { apiGet, apiUpload } from '../api/client'
 import { useProject } from '../context/ProjectContext'
 import { fmtFull, fmtShort } from '../utils/time'
+import * as SS from '../domain/submissionStatus'
 
 const DRAFT_KEY = 'bw_voice_draft'
 
@@ -78,31 +79,31 @@ export function VoiceUpdatePage() {
         done: true,
       },
     ]
-    const st = detailItem.confirm_status
-    if (st === '待确认') {
+    const st = SS.normalize(detailItem.confirm_status)
+    if (st === SS.S_NEW || SS.PENDING_OWNER_REVIEW.has(st)) {
       nodes.push({ icon: '⏳', iconBg: '#FFF7ED', title: '等待负责人审核', sub: '已进入待确认队列', active: true })
-    } else if (st === '已确认' || st === '已入库') {
+    } else if (SS.CONFIRMED_AND_STORED.has(st)) {
       nodes.push({
         icon: '✅', iconBg: '#F0FDF4', title: '负责人确认写入',
         time: fmt(detailItem.confirmed_at),
         sub: detailItem.confirmed_by ? `由 ${detailItem.confirmed_by} 确认，已写入工作推进表` : '已写入工作推进表',
         done: true,
       })
-    } else if (st === '已驳回') {
+    } else if (SS.RETURNED_TO_SUBMITTER.has(st)) {
       nodes.push({
         icon: '↩️', iconBg: '#FEF2F2', title: '退回修改',
         time: fmt(detailItem.updated_at),
         sub: detailItem.reject_reason ? `原因：${detailItem.reject_reason}` : '需要重新提交',
         done: true,
       })
-    } else if (st === '已转交统筹') {
+    } else if (SS.WAITING_COORDINATOR_FEEDBACK.has(st)) {
       nodes.push({
         icon: '↗️', iconBg: '#F5F3FF', title: '转交统筹人处理',
         time: fmt(detailItem.updated_at),
         sub: detailItem.coordinator_note || '已转交统筹人',
         done: true,
       })
-    } else if (st === '待CEO决策') {
+    } else if (SS.WAITING_CEO_DECISION.has(st)) {
       nodes.push({
         icon: '🔺', iconBg: '#EFF6FF', title: '上报CEO决策',
         time: fmt(detailItem.updated_at),
@@ -122,7 +123,8 @@ export function VoiceUpdatePage() {
       if (saved) {
         const d = JSON.parse(saved)
         if (d.text) setText(d.text)
-        if (d.provider) setSelectedProvider(d.provider)
+        // "rules" 不再作为合法选项，忽略该草稿值
+      if (d.provider && d.provider !== 'rules') setSelectedProvider(d.provider)
       }
     } catch { /* ignore */ }
     return () => {
@@ -229,18 +231,14 @@ export function VoiceUpdatePage() {
         source_type: mode === 'voice' ? '语音更新' : '文字更新',
         transcript_text: content,
         submitter: currentUser?.name,
-        llm_provider: selectedProvider !== 'rules' ? selectedProvider : undefined,
+        llm_provider: selectedProvider,
       })
       const suggestion = res.suggestion ?? {}
       setResult(suggestion)
       setEditValues({ ...suggestion })
       setEditingField(null)
       setPhase('extracted')
-      const aiProject = (suggestion as Record<string, unknown>).special_project as string | undefined
-      if (aiProject) {
-        const matched = projects.find((p) => p.name === aiProject || p.name.includes(aiProject) || aiProject.includes(p.name))
-        if (matched) setSelectedProjectId(matched.id)
-      }
+      // special_project 仅作预览展示，不反向驱动项目选择
     } catch (e: any) {
       setError(e?.message ?? 'AI提取失败，请重试')
       setPhase('input')
@@ -264,7 +262,7 @@ export function VoiceUpdatePage() {
         source_type: mode === 'voice' ? '语音更新' : '文字更新',
         transcript_text: content,
         submitter: currentUser.name,
-        llm_provider: selectedProvider !== 'rules' ? selectedProvider : undefined,
+        llm_provider: selectedProvider,
         human_result: editValues ?? undefined,
       })
       setPhase('submitted')
@@ -799,7 +797,6 @@ export function VoiceUpdatePage() {
                         className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 cursor-pointer focus:outline-none"
                         disabled={phase === 'extracting'}
                       >
-                        <option value="rules">规则引擎</option>
                         {providers.map((p) => (
                           <option key={p.provider} value={p.provider}>
                             {p.display_name} ({p.model})
@@ -865,13 +862,17 @@ export function VoiceUpdatePage() {
             {/* History - 只显示自己的提交 */}
             {(() => {
               const myHistory = history.filter(item => item.submitter === currentUser?.name)
-              const STATUS_MAP: Record<string, { cls: string; dot: string }> = {
-                '待确认':    { cls: 'bg-amber-100 text-amber-700',   dot: '#F59E0B' },
-                '已确认':    { cls: 'bg-emerald-100 text-emerald-700', dot: '#10B981' },
-                '已入库':    { cls: 'bg-emerald-100 text-emerald-700', dot: '#10B981' },
-                '已驳回':    { cls: 'bg-red-100 text-red-700',       dot: '#EF4444' },
-                '已转交统筹': { cls: 'bg-purple-100 text-purple-700', dot: '#8B5CF6' },
-                '待CEO决策': { cls: 'bg-blue-100 text-blue-700',     dot: '#3B82F6' },
+              const STATUS_MAP: Record<string, { cls: string; dot: string; label: string }> = {
+                [SS.S_NEW]:                 { cls: 'bg-amber-100 text-amber-700',   dot: '#F59E0B', label: '待确认' },
+                [SS.S_PENDING_OWNER]:       { cls: 'bg-amber-100 text-amber-700',   dot: '#F59E0B', label: '待审核' },
+                [SS.S_CONFIRMED]:           { cls: 'bg-emerald-100 text-emerald-700', dot: '#10B981', label: '已入库' },
+                [SS.S_RETURNED]:            { cls: 'bg-red-100 text-red-700',       dot: '#EF4444', label: '已退回' },
+                [SS.S_WAITING_COORDINATOR]: { cls: 'bg-purple-100 text-purple-700', dot: '#8B5CF6', label: '已转交统筹' },
+                [SS.S_COORDINATOR_GIVEN]:   { cls: 'bg-purple-100 text-purple-700', dot: '#8B5CF6', label: '统筹已反馈' },
+                [SS.S_WAITING_CEO]:         { cls: 'bg-blue-100 text-blue-700',     dot: '#3B82F6', label: '待CEO决策' },
+                [SS.S_CEO_DECIDED]:         { cls: 'bg-blue-100 text-blue-700',     dot: '#3B82F6', label: 'CEO已批示' },
+                [SS.S_WITHDRAWN]:           { cls: 'bg-slate-100 text-slate-500',   dot: '#94A3B8', label: '已撤回' },
+                [SS.S_NEEDS_REVISION]:      { cls: 'bg-orange-100 text-orange-700', dot: '#F97316', label: '需修改' },
               }
               return (
                 <div className="bg-white rounded-2xl border flex-shrink-0" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
@@ -884,7 +885,7 @@ export function VoiceUpdatePage() {
                   ) : (
                     <div className="overflow-y-auto" style={{ maxHeight: 240 }}>
                       {myHistory.slice(0, 8).map((item) => {
-                        const st = STATUS_MAP[item.confirm_status] ?? { cls: 'bg-slate-100 text-slate-500', dot: '#94A3B8' }
+                        const st = STATUS_MAP[SS.normalize(item.confirm_status)] ?? { cls: 'bg-slate-100 text-slate-500', dot: '#94A3B8', label: item.confirm_status || '-' }
                         const summary = (() => {
                           try { return JSON.parse(item.ai_result_json || '{}').summary || item.transcript_text } catch { return item.transcript_text }
                         })()
@@ -911,7 +912,7 @@ export function VoiceUpdatePage() {
                               <p className="text-xs text-slate-400 mt-0.5">{item.source_type} · {time}</p>
                             </div>
                             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold flex-shrink-0 ${st.cls}`}>
-                              {item.confirm_status || '-'}
+                              {st.label}
                             </span>
                             <svg className="opacity-0 group-hover:opacity-60 flex-shrink-0" style={{ width: 12, height: 12, color: '#64748B' }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" /></svg>
                           </div>
@@ -1017,7 +1018,7 @@ export function VoiceUpdatePage() {
                       </div>
 
                       {/* 退回时可基于原文重新提交 */}
-                      {detailItem.confirm_status === '已驳回' && (
+                      {SS.RETURNED_TO_SUBMITTER.has(SS.normalize(detailItem.confirm_status)) && (
                         <div className="p-3 rounded-xl" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
                           <p className="text-xs text-red-700 font-semibold mb-2">该提交已被退回</p>
                           <button

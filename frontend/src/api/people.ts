@@ -24,3 +24,10 @@ export function updatePerson(id: number, payload: PersonPayload): Promise<Person
 export function deletePerson(id: number): Promise<{ ok: boolean }> {
   return apiDelete(`/api/people/${id}`)
 }
+
+export type BatchPersonItem = { name: string; role?: string; system_role?: string; department?: string; contact?: string }
+export type BatchCreateResult = { created: number; skipped: number; skipped_names: string[]; created_names: string[] }
+
+export function batchCreatePeople(people: BatchPersonItem[]): Promise<BatchCreateResult> {
+  return apiPost<BatchCreateResult>('/api/people/batch', { people })
+}

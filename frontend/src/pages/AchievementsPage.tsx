@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { deleteAchievement, fetchAchievements } from '../api/achievements'
+import { createAchievement, deleteAchievement, fetchAchievements } from '../api/achievements'
 import { useProject } from '../context/ProjectContext'
 import type { AchievementItem } from '../types'
 
@@ -23,6 +23,19 @@ export function AchievementsPage() {
   const [loading, setLoading] = useState(false)
   const [filterType, setFilterType] = useState('')
   const [filterProjectId, setFilterProjectId] = useState<number | null>(null)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createSaving, setCreateSaving] = useState(false)
+  const [createError, setCreateError] = useState('')
+  const [createForm, setCreateForm] = useState({
+    name: '',
+    achievement_type: '方案',
+    special_project: '',
+    owner: '',
+    version: 'V0.1',
+    file_link: '',
+    scenario: '',
+    reuse_tag: '',
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -38,6 +51,48 @@ export function AchievementsPage() {
     if (filterType && i.achievement_type !== filterType) return false
     return true
   })
+
+  const currentProject = projects.find((p) => p.id === filterProjectId) ?? projects[0] ?? null
+
+  async function handleCreateAchievement() {
+    if (!createForm.name.trim()) {
+      setCreateError('请先填写成果名称')
+      return
+    }
+    setCreateSaving(true)
+    setCreateError('')
+    try {
+      const created = await createAchievement({
+        project_id: currentProject?.id ?? filterProjectId ?? null,
+        name: createForm.name.trim(),
+        achievement_type: createForm.achievement_type.trim() || '方案',
+        special_project: createForm.special_project.trim() || currentProject?.name || '',
+        owner: createForm.owner.trim(),
+        version: createForm.version.trim() || 'V0.1',
+        file_link: createForm.file_link.trim(),
+        scenario: createForm.scenario.trim(),
+        reuse_tag: createForm.reuse_tag.trim(),
+        source_type: '人工录入',
+      })
+      setItems((prev) => [created, ...prev])
+      setSelected(created)
+      setCreateOpen(false)
+      setCreateForm({
+        name: '',
+        achievement_type: '方案',
+        special_project: currentProject?.name ?? '',
+        owner: '',
+        version: 'V0.1',
+        file_link: '',
+        scenario: '',
+        reuse_tag: '',
+      })
+    } catch (err: any) {
+      setCreateError(err?.message || '创建失败，请稍后重试')
+    } finally {
+      setCreateSaving(false)
+    }
+  }
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -58,11 +113,148 @@ export function AchievementsPage() {
           <option value="">全部类型</option>
           {['方案', '模板', 'SOP', 'Prompt', 'Agent', '文档'].map((t) => <option key={t}>{t}</option>)}
         </select>
-        <button className="cursor-pointer flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-semibold hover:opacity-90" style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)', boxShadow: '0 2px 8px rgba(3,105,161,0.25)' }}>
+        <button
+          type="button"
+          onClick={() => {
+            setCreateError('')
+            setCreateForm((prev) => ({
+              ...prev,
+              special_project: currentProject?.name || prev.special_project,
+            }))
+            setCreateOpen(true)
+          }}
+          className="cursor-pointer flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-semibold hover:opacity-90"
+          style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)', boxShadow: '0 2px 8px rgba(3,105,161,0.25)' }}
+        >
           <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
           上传成果
         </button>
       </header>
+
+      {createOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(15,23,42,0.45)' }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: '#E9EFF6' }}>
+              <div>
+                <h3 className="text-base font-bold text-slate-800">上传成果</h3>
+                <p className="text-xs text-slate-400 mt-0.5">这里先登记成果信息和文件链接，不直接上传二进制文件</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { if (!createSaving) setCreateOpen(false) }}
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400"
+              >
+                <svg style={{ width: 16, height: 16 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              {createError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {createError}
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-4">
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold text-slate-600">成果名称</span>
+                  <input
+                    value={createForm.name}
+                    onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sky-400"
+                    placeholder="例如：知识资产AI化方案"
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold text-slate-600">成果类型</span>
+                  <select
+                    value={createForm.achievement_type}
+                    onChange={(e) => setCreateForm((prev) => ({ ...prev, achievement_type: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sky-400 bg-white"
+                  >
+                    {['方案', '模板', 'SOP', 'Prompt', 'Agent', '文档'].map((t) => <option key={t}>{t}</option>)}
+                  </select>
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold text-slate-600">所属专项</span>
+                  <input
+                    value={createForm.special_project}
+                    onChange={(e) => setCreateForm((prev) => ({ ...prev, special_project: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sky-400"
+                    placeholder="默认带出当前项目"
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold text-slate-600">负责人</span>
+                  <input
+                    value={createForm.owner}
+                    onChange={(e) => setCreateForm((prev) => ({ ...prev, owner: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sky-400"
+                    placeholder="可留空"
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold text-slate-600">版本</span>
+                  <input
+                    value={createForm.version}
+                    onChange={(e) => setCreateForm((prev) => ({ ...prev, version: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sky-400"
+                    placeholder="V0.1"
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold text-slate-600">复用标签</span>
+                  <input
+                    value={createForm.reuse_tag}
+                    onChange={(e) => setCreateForm((prev) => ({ ...prev, reuse_tag: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sky-400"
+                    placeholder="例如：内测、自动化、AI"
+                  />
+                </label>
+              </div>
+              <label className="space-y-1.5 block">
+                <span className="text-xs font-semibold text-slate-600">文件链接 / 存储地址</span>
+                <input
+                  value={createForm.file_link}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, file_link: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sky-400"
+                  placeholder="可填网盘链接、在线文档地址或本地路径"
+                />
+              </label>
+              <label className="space-y-1.5 block">
+                <span className="text-xs font-semibold text-slate-600">使用场景</span>
+                <textarea
+                  value={createForm.scenario}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, scenario: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sky-400 resize-none"
+                  rows={3}
+                  placeholder="例如：专项内复用、内部演示、制度落地"
+                />
+              </label>
+            </div>
+            <div className="px-6 py-4 border-t flex items-center justify-between gap-3" style={{ borderColor: '#E9EFF6' }}>
+              <span className="text-xs text-slate-400">* 这里只登记成果信息，文件本体由文件链接承载。</span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCreateOpen(false)}
+                  disabled={createSaving}
+                  className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 disabled:opacity-50"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateAchievement}
+                  disabled={createSaving}
+                  className="px-4 py-2 rounded-lg text-white text-sm font-semibold hover:opacity-90 disabled:opacity-50"
+                  style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}
+                >
+                  {createSaving ? '保存中...' : '确认上传'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="bg-white border-b px-6 py-4 flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>

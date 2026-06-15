@@ -54,7 +54,7 @@ _EXTRACT_PROMPT = """你是博维AI升级项目的结构化提取助手。请从
 ```
 
 要求：
-1. `special_project` 只能从这些专项中选择最匹配的一项：{projects}
+1. `special_project` 如实提取文本中明确提到的专项名称；若文本中没有明确说明则留空，不要猜测或发明项目名
 2. `related_task` 是对**本周主要工作内容**的简短概括（10-25字），描述本周在做什么，不要写下周计划
 3. `completed_items` 是本周已完成的具体事项列表，与 `related_task` 互补：related_task 是概述，completed_items 是明细
 4. `achievements` 只记录真实产出的成果，如方案、模板、报告、SOP、Prompt、Agent原型、会议纪要、案例包、产品材料
@@ -131,7 +131,7 @@ def _call_anthropic(text: str) -> dict:
     if not cfg.get("api_key"):
         raise ValueError("Claude API Key not configured")
     client = anthropic.Anthropic(api_key=cfg["api_key"], timeout=_LLM_TIMEOUT)
-    prompt = _EXTRACT_PROMPT.format(text=text, projects="、".join(PROJECTS))
+    prompt = _EXTRACT_PROMPT.format(text=text)
     resp = client.messages.create(
         model=cfg["model"],
         max_tokens=2048,
@@ -147,7 +147,7 @@ def _call_openai_compat(text: str, provider: str) -> dict:
     if not cfg.get("api_key"):
         raise ValueError(f"{provider} API Key not configured")
     client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"], timeout=_LLM_TIMEOUT)
-    prompt = _EXTRACT_PROMPT.format(text=text, projects="、".join(PROJECTS))
+    prompt = _EXTRACT_PROMPT.format(text=text)
     resp = client.chat.completions.create(
         model=cfg["model"],
         messages=[{"role": "user", "content": prompt}],
@@ -327,7 +327,8 @@ def _issue_rows(text: str, project: str, submitter: str | None, ceo_name: str = 
 
 
 def _normalize_llm_result(llm_data: dict, source_type: str, text: str, submitter: str | None, ceo_name: str = "") -> dict:
-    project = llm_data.get("special_project") or _pick_project(text)
+    # LLM 提取的 special_project 仅作展示用，不再用关键词猜测兜底
+    project = (llm_data.get("special_project") or "").strip()
     completed = _dedupe(list(llm_data.get("completed_items") or []))
     next_steps = _dedupe(list(llm_data.get("next_steps") or []))
     achievements = list(llm_data.get("achievements") or [])
@@ -491,7 +492,139 @@ def _with_meta(result: dict, provider: str, used_llm: bool, fallback_reason: str
     return result
 
 
-def extract_update(source_type: str, transcript_text: str, submitter: str | None = None, provider: str | None = None, ceo_name: str = "") -> dict:
+_TASK_OUTLINE_PROMPT = """你是项目管理助手。从下面的大纲或计划文本中提取关键任务列表，只输出 JSON，不要解释。
+
+当前年份：{current_year}
+
+文本：
+```
+{text}
+```
+
+要求：
+1. `project_guess`：从文本内容推断这批任务所属的项目或专项名称（用文本中出现的原词或最接近的概念，不确定则留空）
+2. 每条任务：key_task（任务名称，10-30字）、owner（负责人姓名，未提及则空）、coordinator（统筹人姓名，未提及则空）、collaborators（协作人，多人用逗号分隔，未提及则空）、plan_time（格式 YYYY-MM 或 YYYY-MM~YYYY-MM，未提及则空；文本中只写了月份未写年份时，用当前年份 {current_year} 补全）、status（默认"未开始"）、key_achievement（期望成果，未提及则空）、completion_standard（完成标准，未提及则空）
+3. 最多提取 20 条，按文本顺序排列
+4. 只提取明确的任务，不要推断或发明
+
+输出格式：
+{{
+  "project_guess": "",
+  "tasks": [
+    {{
+      "key_task": "",
+      "owner": "",
+      "coordinator": "",
+      "collaborators": "",
+      "plan_time": "",
+      "status": "未开始",
+      "key_achievement": "",
+      "completion_standard": ""
+    }}
+  ]
+}}
+"""
+
+
+def _fix_past_year(plan_time: str) -> str:
+    """把 plan_time 里所有早于今年的 YYYY 替换成今年。"""
+    if not plan_time:
+        return plan_time
+    current_year = date.today().year
+    def _replace(m: re.Match) -> str:
+        y = int(m.group())
+        return str(current_year) if y < current_year else m.group()
+    return re.sub(r'\d{4}', _replace, plan_time)
+
+
+def _match_project(guess: str, project_names: list[str]) -> tuple[str, float]:
+    """将 AI 猜测的项目名与候选列表做模糊匹配，返回 (最佳匹配名, 置信度)。"""
+    if not guess or not project_names:
+        return ("", 0.0)
+    guess_lower = guess.lower()
+    # 精确包含匹配
+    for name in project_names:
+        if name == guess or name in guess or guess in name:
+            return (name, 0.95)
+    # 中文关键词（2字以上）或英文单词（3字以上）匹配
+    for name in project_names:
+        keywords = re.findall(r'[一-鿿]{2,}|[a-zA-Z]{3,}', name.lower())
+        for kw in keywords:
+            if kw in guess_lower:
+                return (name, 0.75)
+    return ("", 0.0)
+
+
+def extract_tasks(text: str, provider: str | None = None, project_names: list[str] | None = None) -> dict:
+    """从大纲文本提取关键任务列表（LLM only），失败抛 RuntimeError。
+    返回 {tasks, project_guess, suggested_project, confidence}。
+    """
+    clean = _clean_text(text)
+    if not clean:
+        return {"tasks": [], "project_guess": "", "suggested_project": "", "confidence": 0.0}
+
+    effective_provider: str | None = None
+    if provider and provider != "rules":
+        effective_provider = provider
+    elif USE_LLM:
+        effective_provider = LLM_PROVIDER
+
+    if not effective_provider:
+        raise RuntimeError("未配置可用AI引擎，请在系统设置中配置API Key")
+
+    prompt = _TASK_OUTLINE_PROMPT.format(text=clean, current_year=date.today().year)
+    try:
+        if effective_provider == "anthropic":
+            import anthropic
+            cfg = _get_cfg("anthropic")
+            if not cfg.get("api_key"):
+                raise ValueError("Claude API Key not configured")
+            client = anthropic.Anthropic(api_key=cfg["api_key"], timeout=_LLM_TIMEOUT)
+            resp = client.messages.create(
+                model=cfg["model"], max_tokens=2048,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            data = _extract_json_blob(resp.content[0].text)
+        else:
+            from openai import OpenAI
+            cfg = _get_cfg(effective_provider)
+            if not cfg.get("api_key"):
+                raise ValueError(f"{effective_provider} API Key not configured")
+            client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"], timeout=_LLM_TIMEOUT)
+            resp = client.chat.completions.create(
+                model=cfg["model"], max_tokens=2048,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            data = _extract_json_blob(resp.choices[0].message.content or "")
+
+        tasks = list(data.get("tasks") or [])
+        for t in tasks:
+            t.setdefault("key_task", "")
+            t.setdefault("owner", "")
+            t.setdefault("coordinator", "")
+            t.setdefault("collaborators", "")
+            t.setdefault("plan_time", "")
+            t.setdefault("status", "未开始")
+            t.setdefault("key_achievement", "")
+            t.setdefault("completion_standard", "")
+            t["plan_time"] = _fix_past_year(t["plan_time"])
+        tasks = [t for t in tasks if t.get("key_task")]
+
+        project_guess = (data.get("project_guess") or "").strip()
+        suggested_project, confidence = _match_project(project_guess, project_names or [])
+
+        return {
+            "tasks": tasks,
+            "project_guess": project_guess,
+            "suggested_project": suggested_project,
+            "confidence": confidence,
+        }
+    except Exception as exc:
+        logger.warning("extract_tasks failed provider=%s: %s", effective_provider, exc)
+        raise RuntimeError(f"AI引擎（{effective_provider}）提取任务失败：{exc}") from exc
+
+
+def extract_update(source_type: str, transcript_text: str, submitter: str | None = None, provider: str | None = None, ceo_name: str = "", *, require_llm: bool = False) -> dict:
     text = _clean_text(transcript_text)
     if not text:
         return _with_meta({
@@ -532,7 +665,11 @@ def extract_update(source_type: str, transcript_text: str, submitter: str | None
         llm_data = _extract_with_llm(text, effective_provider)
         if llm_data is not None:
             return _with_meta(_normalize_llm_result(llm_data, source_type, text, submitter, ceo_name), effective_provider, True, "")
+        if require_llm:
+            raise RuntimeError(f"AI引擎（{effective_provider}）调用失败，请检查API Key配置后重试，或联系管理员")
         logger.info("LLM extract fell back to rule engine")
         return _with_meta(_rule_extract(source_type, text, submitter, ceo_name), "rules", False, f"{effective_provider} 调用失败，已回退到规则提取")
 
+    if require_llm:
+        raise RuntimeError("未配置可用AI引擎，请在系统设置中配置API Key")
     return _with_meta(_rule_extract(source_type, text, submitter, ceo_name), "rules", False, "")

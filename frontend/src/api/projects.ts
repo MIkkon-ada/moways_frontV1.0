@@ -1,5 +1,5 @@
 import { apiGet, apiPost, apiPatch, apiDelete } from './client'
-import type { Project, ProjectMember } from '../types'
+import type { Project, ProjectCapabilities, ProjectMember } from '../types'
 
 // 当前用户可见项目：GET /api/projects[?include_archived=true]
 export function getProjects(includeArchived = false): Promise<Project[]> {
@@ -15,6 +15,11 @@ export function getProject(projectId: number): Promise<Project> {
 // 项目成员：GET /api/projects/{id}/members
 export function getProjectMembers(projectId: number): Promise<ProjectMember[]> {
   return apiGet<ProjectMember[]>(`/api/projects/${projectId}/members`)
+}
+
+// 当前用户在该项目的能力标志：GET /api/projects/{id}/capabilities
+export function getProjectCapabilities(projectId: number): Promise<ProjectCapabilities> {
+  return apiGet<ProjectCapabilities>(`/api/projects/${projectId}/capabilities`)
 }
 
 // ── 4B：项目主数据管理（super_admin）────────────────────────

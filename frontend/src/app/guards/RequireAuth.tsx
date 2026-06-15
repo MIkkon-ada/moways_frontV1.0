@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useProject } from '../../context/ProjectContext'
+import { CenterMessage } from '../../layouts/AppLayout'
 
 type RequireAuthProps = {
   children: ReactNode
@@ -9,7 +10,11 @@ type RequireAuthProps = {
 export function RequireAuth({ children }: RequireAuthProps) {
   const { authState } = useProject()
 
-  if (authState !== 'authenticated') {
+  if (authState === 'loading') {
+    return <CenterMessage title="加载中..." />
+  }
+
+  if (authState === 'unauthenticated') {
     return <Navigate to="/login" replace />
   }
 

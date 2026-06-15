@@ -17,13 +17,26 @@ def to_dict(obj):
     return data
 
 
-def log(db: Session, operator: str, action: str, target_type: str, target_id: int | None, before: Any = None, after: Any = None):
+def log(
+    db: Session,
+    operator: str,
+    action: str,
+    target_type: str,
+    target_id: int | None,
+    before: Any = None,
+    after: Any = None,
+    *,
+    project_id: int | None = None,
+    note: str = "",
+):
     db.add(
         models.OperationLog(
+            project_id=project_id,
             operator=operator,
             action=action,
             target_type=target_type,
             target_id=target_id,
+            note=note,
             before_json=json.dumps(before or {}, ensure_ascii=False),
             after_json=json.dumps(after or {}, ensure_ascii=False),
         )

@@ -365,7 +365,7 @@ export function DashboardPage() {
             return null
           })()}
           <PanelCard title="本月重点" onMore={(() => { const pid = scopeId ?? currentProjectId; return pid ? () => navigate(`/project/${pid}/tasks`) : undefined })()}>
-            {(data?.recent?.tasks as any[] ?? []).slice(0, 5).map((t: any, i: number) => (
+            {(data?.recent?.tasks as any[] ?? []).slice(0, 3).map((t: any, i: number) => (
               <div key={i} className="flex items-start gap-3 p-2.5 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
                 <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-600 text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
                 <div className="flex-1 min-w-0">

@@ -2,9 +2,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { getCurrentUser, login as apiLogin, logout as apiLogout } from '../api/auth'
-import { getProjects } from '../api/projects'
+import { getProjectCapabilities, getProjects } from '../api/projects'
 import { ApiError } from '../api/client'
-import type { CurrentUser, Project } from '../types'
+import type { CurrentUser, Project, ProjectCapabilities } from '../types'
 
 const LS_LAST_PROJECT = 'bowei_last_project_id'
 
@@ -22,6 +22,8 @@ type ProjectContextValue = {
   currentProjectId: number | null      // 第一事实来源：URL
   currentProject: Project | null
   currentProjectRoles: string[]
+  /** Backend-computed capability flags for the current project. null while loading. */
+  currentCapabilities: ProjectCapabilities | null
 
   loading: boolean
   error: string | null
@@ -45,6 +47,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [currentCapabilities, setCurrentCapabilities] = useState<ProjectCapabilities | null>(null)
 
   // currentProjectId 始终来自 URL
   const currentProjectId = useMemo(
@@ -148,6 +151,19 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     [projects, currentProjectId],
   )
 
+  // Fetch backend-computed capabilities whenever the active project changes
+  useEffect(() => {
+    if (currentProjectId === null || authState !== 'authenticated') {
+      setCurrentCapabilities(null)
+      return
+    }
+    let cancelled = false
+    getProjectCapabilities(currentProjectId)
+      .then((caps) => { if (!cancelled) setCurrentCapabilities(caps) })
+      .catch(() => { if (!cancelled) setCurrentCapabilities(null) })
+    return () => { cancelled = true }
+  }, [currentProjectId, authState])
+
   const value: ProjectContextValue = {
     authState,
     currentUser,
@@ -155,6 +171,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     currentProjectId,
     currentProject,
     currentProjectRoles: currentProject?.user_roles ?? [],
+    currentCapabilities,
     loading,
     error,
     login,

@@ -6,15 +6,16 @@ from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
 from ..database import get_db
+from ..domain import submission_status as SS
 from ..permissions import (
     ROLE_CEO,
     can_view_submission,
-    get_all_project_roles,
     get_current_user_name,
     get_person_id,
     get_user_context_from_db,
     resolve_project_id,
 )
+from ..services.policy import can_submit_to_project as _can_submit_to_project
 from ..services.extractor import extract_update
 
 router = APIRouter(prefix="/api/updates", tags=["updates"])
@@ -39,36 +40,6 @@ def _ceo_name(db: Session) -> str:
     return row.name if row else ""
 
 
-def _can_submit_to_project(
-    context: dict,
-    person_id: int | None,
-    project_id: int,
-    db: Session,
-) -> bool:
-    """
-    判断当前用户是否可以向某项目提交进展。
-    允许角色：owner、member、coordinator。
-    先查 project_members（新路径），无记录时回落旧字符串字段（迁移过渡兼容）。
-    """
-    if context.get("is_tech_admin"):
-        return True
-
-    if person_id is not None:
-        roles = get_all_project_roles(person_id, project_id, db)
-        if roles:
-            return any(r in ("owner", "member", "coordinator") for r in roles)
-
-    # 旧字符串字段回落（project_members 未录入时）
-    proj_name = crud.get_project_name_by_id(project_id, db) or ""
-    if proj_name:
-        from ..permissions import PROJECT_ROLE_OWNER, PROJECT_ROLE_COORDINATOR, PROJECT_ROLE_COLLABORATOR
-        old_role = context.get("project_roles", {}).get(proj_name)
-        if old_role in (PROJECT_ROLE_OWNER, PROJECT_ROLE_COORDINATOR, PROJECT_ROLE_COLLABORATOR):
-            return True
-
-    return False
-
-
 # ── 端点 ───────────────────────────────────────────────────────
 
 @router.post("/extract")
@@ -77,12 +48,16 @@ def extract(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    """纯 AI 提取，不创建提交记录，不要求 project_id。"""
+    """纯 AI 提取，不创建提交记录，不要求 project_id。语音更新模块专用，强制走 LLM。"""
     _ = current_user
-    result = extract_update(
-        payload.source_type, payload.transcript_text,
-        payload.submitter, payload.llm_provider, _ceo_name(db),
-    )
+    try:
+        result = extract_update(
+            payload.source_type, payload.transcript_text,
+            payload.submitter, payload.llm_provider, _ceo_name(db),
+            require_llm=True,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc))
     return {"suggestion": result}
 
 
@@ -104,8 +79,10 @@ def create_update(
         )
 
     # ── 2. 成员角色校验 ───────────────────────────────────────────
-    person_id = context.get("person_id") or get_person_id(submitter, db)
-    if not _can_submit_to_project(context, person_id, effective_project_id, db):
+    # Ensure context carries person_id (submitter may differ from current_user)
+    if not context.get("person_id"):
+        context = dict(context, person_id=get_person_id(submitter, db))
+    if not _can_submit_to_project(context, effective_project_id, db):
         raise HTTPException(403, "只有项目负责人（owner）、统筹人（coordinator）或成员（member）可以提交进展")
 
     # ── 3. 去重：60秒内同一提交人+同一原文不重复入库 ─────────────
@@ -124,10 +101,16 @@ def create_update(
             return {"submission": crud.to_dict(dup), "suggestion": json.loads(dup.ai_result_json or "{}")}
 
     # ── 4. AI 提取 ────────────────────────────────────────────────
-    result = extract_update(
-        payload.source_type, payload.transcript_text,
-        submitter, payload.llm_provider, _ceo_name(db),
-    )
+    # 指定了 LLM provider 就强制走 LLM，失败直接报错不降级
+    _require_llm = bool(payload.llm_provider and payload.llm_provider != "rules")
+    try:
+        result = extract_update(
+            payload.source_type, payload.transcript_text,
+            submitter, payload.llm_provider, _ceo_name(db),
+            require_llm=_require_llm,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc))
     human_result = payload.human_result or payload.edited_suggestion or result
 
     # ── 5. 回填 special_project 到 human_result JSON ─────────────
@@ -148,7 +131,7 @@ def create_update(
         transcript_text=payload.transcript_text,
         ai_result_json=json.dumps(result, ensure_ascii=False),
         human_result_json=json.dumps(human_result, ensure_ascii=False),
-        confirm_status="待确认",
+        confirm_status=SS.S_NEW,
         confidence=human_result.get("confidence", result.get("confidence", 0)),
     )
     db.add(row)
@@ -161,10 +144,28 @@ def create_update(
 def list_updates(
     project_id: int | None = None,
     special_project: str | None = None,
+    mine: bool = False,
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
     context = get_user_context_from_db(current_user, db)
+
+    # mine=true：只看自己提交的，无需项目过滤，无需确认中心权限
+    if mine:
+        rows = db.query(models.UpdateSubmission).filter(
+            models.UpdateSubmission.submitter == current_user
+        ).order_by(models.UpdateSubmission.created_at.desc()).all()
+        result = []
+        for row in rows:
+            item = crud.to_dict(row)
+            human = _update_human_result(row)
+            item["special_project"] = (
+                human.get("special_project")
+                or (human.get("task") or {}).get("special_project")
+                or ""
+            )
+            result.append(item)
+        return result
 
     # ── 解析有效 project_id ───────────────────────────────────────
     # 策略：special_project 无法解析时返回 []，保持 GET 请求不破坏旧页面
@@ -208,7 +209,14 @@ def list_updates(
             else:
                 continue  # project_id 已设置但与目标不符
 
-        result.append(crud.to_dict(row))
+        item = crud.to_dict(row)
+        human = _update_human_result(row)
+        item["special_project"] = (
+            human.get("special_project")
+            or (human.get("task") or {}).get("special_project")
+            or ""
+        )
+        result.append(item)
     return result
 
 

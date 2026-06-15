@@ -11,7 +11,7 @@ if not exist .venv (
   call .venv\Scripts\activate
 )
 
-echo 后端启动中... http://127.0.0.1:8002
-.venv\Scripts\uvicorn.exe app.main:app --reload --host 0.0.0.0 --port 8002
+echo 后端启动中... http://127.0.0.1:8000
+.venv\Scripts\uvicorn.exe app.main:app --reload --host 0.0.0.0 --port 8000
 
 endlocal

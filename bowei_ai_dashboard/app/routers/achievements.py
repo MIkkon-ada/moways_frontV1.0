@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from .. import crud, models, schemas
 from ..database import get_db
 from ..permissions import (
+    PROJECT_ROLE_COORDINATOR,
     PROJECT_ROLE_OWNER,
     can_view_project,
     get_all_project_roles,
@@ -15,15 +16,12 @@ from ..permissions import (
 
 router = APIRouter(prefix="/api/achievements", tags=["achievements"])
 
-# ── 5C 写权限检查 ─────────────────────────────────────────────
-_WRITE_ROLES = ["owner"]
+# ── 写权限：owner 或 coordinator 可直接编辑已入库事项（Path B）────
+_WRITE_ROLES = {"owner", "coordinator"}
 
 
 def _check_write(context: dict, project_id: int | None, proj_name: str, db: Session) -> None:
-    """
-    写权限：仅 super_admin 或项目 owner 可写主数据。
-    process_guard / coordinator / member / project_ceo 均不允许。
-    """
+    """super_admin、项目 owner 或统筹人（coordinator）可写主数据。"""
     if context.get("is_tech_admin"):
         return
 
@@ -34,14 +32,15 @@ def _check_write(context: dict, project_id: int | None, proj_name: str, db: Sess
             {"pid": project_id},
         ).fetchone()
         if has_pm:
-            if "owner" in get_all_project_roles(person_id, project_id, db):
+            if set(get_all_project_roles(person_id, project_id, db)) & _WRITE_ROLES:
                 return
-            raise HTTPException(403, "permission denied — 仅项目负责人（owner）或超级管理员可执行写操作")
+            raise HTTPException(403, "permission denied — 仅项目负责人（owner）、统筹人（coordinator）或超级管理员可执行写操作")
 
-    if proj_name and context.get("project_roles", {}).get(proj_name) == PROJECT_ROLE_OWNER:
+    legacy_role = context.get("project_roles", {}).get(proj_name, "")
+    if proj_name and legacy_role in {PROJECT_ROLE_OWNER, PROJECT_ROLE_COORDINATOR}:
         return
 
-    raise HTTPException(403, "permission denied — 仅项目负责人（owner）或超级管理员可执行写操作")
+    raise HTTPException(403, "permission denied — 仅项目负责人（owner）、统筹人（coordinator）或超级管理员可执行写操作")
 
 
 def _row_project_id(row: models.Achievement, db: Session) -> int | None:
@@ -172,7 +171,9 @@ def update_achievement(
     new_pid = resolve_project_id(payload.special_project, payload.project_id, db)
     if new_pid is not None:
         row.project_id = new_pid
-    crud.log(db, current_user, "修改成果", "achievement", row.id, before, payload.dict())
+    row.edit_count = (row.edit_count or 0) + 1
+    effective_pid = row.project_id or project_id
+    crud.log(db, current_user, "修改成果", "achievement", row.id, before, payload.dict(), project_id=effective_pid)
     db.commit()
     return crud.to_dict(row)
 

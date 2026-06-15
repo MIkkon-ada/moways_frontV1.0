@@ -6,11 +6,12 @@ from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
 
 from .. import crud, models
 from ..database import get_db
+from ..domain import submission_status as SS
 from ..permissions import (
     PROJECT_ROLE_COLLABORATOR,
     PROJECT_ROLE_COORDINATOR,
@@ -26,21 +27,35 @@ from ..permissions import (
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
-# ── 状态分组 ─────────────────────────────────────────────────
+# ── 任务状态分组 ─────────────────────────────────────────────
 _NOT_STARTED  = {"未开始"}
 _IN_PROGRESS  = {"推进中", "进行中"}
 _COMPLETED    = {"已完成"}
 _DELAYED      = {"延期"}
 _PAUSED       = {"暂缓", "搁置"}
 
-_SUB_PENDING   = {"待确认", "待负责人审核", "已重新提交", "统筹人已反馈", "CEO已批示"}
-_SUB_RETURNED  = {"已打回提交人", "returned_to_submitter", "需修改"}
-_SUB_CONFIRMED = {"已入库", "已确认入库", "stored", "approved_for_storage"}
-_CEO_PENDING   = {"待CEO决策", "pending_ceo_decision"}
-_CEO_DECIDED   = {"CEO已批示", "ceo_decided"}
+# ── 提交状态分组：统一从 domain.submission_status 导入 ────────
+# 不再在此处定义散 set，确保 dashboard 与确认中心数字口径一致。
+_SUB_PENDING   = SS.PENDING_OWNER_REVIEW
+_SUB_RETURNED  = SS.RETURNED_TO_SUBMITTER
+_SUB_CONFIRMED = SS.CONFIRMED_AND_STORED
+_CEO_PENDING   = SS.WAITING_CEO_DECISION
+# CEO已批示 = CEO 已给指示，等待 owner 确认入库（属于 PENDING_OWNER_REVIEW）
+# _CEO_DECIDED 不再独立计数，避免与 _SUB_PENDING 双重计数。
+# 如需展示"CEO已批示"计数，使用 SS.stats_ceo_decided()。
 
 
 # ── plan_time 时间工具 ───────────────────────────────────────
+
+def _month_to_iso(month: str | None) -> str | None:
+    """将前端传来的 '2026年6月' 转为 plan_time LIKE 用的 '2026-06' 前缀；已是 ISO 格式则原样返回。"""
+    if not month:
+        return month
+    m = re.match(r'(\d{4})年(\d{1,2})月', month.strip())
+    if m:
+        return f"{m.group(1)}-{int(m.group(2)):02d}"
+    return month
+
 
 def _parse_plan_ym(plan_time: str):
     """
@@ -83,11 +98,45 @@ def _plan_time_in_current_month(plan_time: str) -> bool:
 
 # ── 内部工具 ─────────────────────────────────────────────────
 
-def _apply_project_scope(query, context, model_cls):
-    """全局模式：按 visible_projects 限制 special_project 字段。"""
-    if not context["can_view_all"] and context["visible_projects"]:
-        return query.filter(model_cls.special_project.in_(context["visible_projects"]))
-    return query
+def _get_visible_project_ids(context: dict, db: Session) -> list[int] | None:
+    """
+    返回当前用户可见的 project_id 列表。
+    管理员返回 None（无限制）；普通用户返回合并了新旧两套权限系统的 ID 列表。
+    """
+    if context["can_view_all"]:
+        return None
+    ids: set[int] = set()
+    # 新系统：project_members 表
+    person_id = context.get("person_id")
+    if person_id:
+        rows = db.execute(
+            text("SELECT DISTINCT project_id FROM project_members WHERE person_id = :pid"),
+            {"pid": person_id},
+        ).fetchall()
+        ids.update(r[0] for r in rows)
+    # 旧系统：Person 字符串字段推导的项目名 → 转成 ID
+    visible_names = context.get("visible_projects") or []
+    if visible_names:
+        rows = db.query(models.Project.id).filter(models.Project.name.in_(visible_names)).all()
+        ids.update(r[0] for r in rows)
+    return list(ids)
+
+
+def _apply_project_scope(query, context, model_cls, visible_project_ids=None):
+    """全局模式：按权限限制可见数据，同时兼容新(project_id)和旧(special_project)字段。"""
+    if context["can_view_all"]:
+        return query
+    visible_names = context.get("visible_projects") or []
+    ids = list(visible_project_ids or [])
+    conds = []
+    sp_col = getattr(model_cls, "special_project", None)
+    if visible_names and sp_col is not None:
+        conds.append(sp_col.in_(visible_names))
+    if ids and hasattr(model_cls, "project_id"):
+        conds.append(model_cls.project_id.in_(ids))
+    if not conds:
+        return query.filter(False)
+    return query.filter(or_(*conds))
 
 
 def _proj_or_filter(model_cls, project_id: int, proj_name: str | None, str_col: str = "special_project"):
@@ -159,20 +208,20 @@ def _task_stats(tasks: list) -> dict:
 
 
 def _submission_stats(subs: list) -> dict:
-    statuses = [s.confirm_status or "" for s in subs]
     return {
-        "total_submissions":         len(subs),
-        "pending_owner_confirmation": sum(1 for s in statuses if s in _SUB_PENDING),
-        "returned_submissions":       sum(1 for s in statuses if s in _SUB_RETURNED),
-        "confirmed_submissions":      sum(1 for s in statuses if s in _SUB_CONFIRMED),
+        "total_submissions":          len(subs),
+        "pending_owner_confirmation": SS.stats_pending_owner(subs),
+        "returned_submissions":       SS.stats_returned(subs),
+        "confirmed_submissions":      SS.stats_confirmed(subs),
     }
 
 
 def _ceo_decision_stats(subs: list) -> dict:
-    statuses = [s.confirm_status or "" for s in subs]
     return {
-        "pending_ceo_decisions": sum(1 for s in statuses if s in _CEO_PENDING),
-        "decided_items":         sum(1 for s in statuses if s in _CEO_DECIDED),
+        "pending_ceo_decisions": SS.stats_waiting_ceo(subs),
+        # CEO已批示：CEO 已给指示、owner 尚未入库；属于 pending_owner 视图的子集，
+        # 此处单独展示供 CEO 角色查看"我已批示了多少条"，不与 pending_owner_confirmation 重复计入总量。
+        "ceo_decided_awaiting_owner": SS.stats_ceo_decided(subs),
     }
 
 
@@ -191,7 +240,7 @@ def _empty_project_overview(context: dict, label: str) -> dict:
         "achievement_stats": {"total_achievements": 0, "recent_achievements": []},
         "issue_stats":      {"total_issues": 0, "open_issues": 0, "high_priority_issues": 0, "waiting_ceo_decision": 0},
         "submission_stats": {"total_submissions": 0, "pending_owner_confirmation": 0, "returned_submissions": 0, "confirmed_submissions": 0},
-        "ceo_decision_stats": {"pending_ceo_decisions": 0, "decided_items": 0},
+        "ceo_decision_stats": {"pending_ceo_decisions": 0, "ceo_decided_awaiting_owner": 0},
         "recent":           {"submissions": [], "tasks": [], "issues": []},
         # Legacy fields
         "summary":          {"task_count": 0, "achievement_count": 0, "open_issue_count": 0, "pending_confirmation_count": 0},
@@ -225,7 +274,8 @@ def _project_overview(
 
     # ── Tasks ──────────────────────────────────────────────
     task_q = db.query(models.Task).filter(
-        _proj_or_filter(models.Task, project_id, proj_name)
+        _proj_or_filter(models.Task, project_id, proj_name),
+        models.Task.is_deleted == False,
     )
     if is_member:
         # member 只看自己负责的任务
@@ -235,7 +285,7 @@ def _project_overview(
     if status_filter:
         task_q = task_q.filter(models.Task.status == status_filter)
     if month_filter:
-        task_q = task_q.filter(models.Task.plan_time.like(f"{month_filter}%"))
+        task_q = task_q.filter(models.Task.plan_time.like(f"{_month_to_iso(month_filter)}%"))
     tasks = task_q.order_by(models.Task.updated_at.desc()).all()
 
     # ── Issues ─────────────────────────────────────────────
@@ -355,23 +405,18 @@ def _project_overview(
     completion_rate = round(task_s["completed"] / task_s["total_tasks"] * 100) if task_s["total_tasks"] else 0
 
     # ── 角色队列：仪表盘右下面板按角色展示不同内容 ────────────
-    _OWNER_REVIEW_ST = {"待确认", "待负责人审核", "已重新提交", "统筹人已反馈", "CEO已批示"}
-    _COORD_ST        = {"已转交统筹人"}
-    _FINAL_ST        = {"已入库", "已确认入库", "已确认", "已退回", "不入库", "已归档",
-                        "已撤回", "confirmed", "stored", "approved_for_storage"}
-
     if is_ceo and not is_owner and not is_super:
         queue_type  = "pending_decisions"
-        queue_items = [s for s in all_subs if (s.confirm_status or "") in _CEO_PENDING]
+        queue_items = [s for s in all_subs if (s.confirm_status or "") in SS.WAITING_CEO_DECISION]
     elif is_owner or is_super:
         queue_type  = "pending_review"
-        queue_items = [s for s in all_subs if (s.confirm_status or "") in _OWNER_REVIEW_ST]
+        queue_items = [s for s in all_subs if (s.confirm_status or "") in SS.PENDING_OWNER_REVIEW]
     elif is_coord:
         queue_type  = "pending_coordinator"
-        queue_items = [s for s in all_subs if (s.confirm_status or "") in _COORD_ST]
+        queue_items = [s for s in all_subs if (s.confirm_status or "") in SS.WAITING_COORDINATOR_FEEDBACK]
     else:
         queue_type  = "in_progress"
-        queue_items = [s for s in subs if (s.confirm_status or "") not in _FINAL_ST]
+        queue_items = [s for s in subs if (s.confirm_status or "") not in SS.ALL_TERMINAL]
 
     role_queue = {
         "type":  queue_type,
@@ -440,11 +485,6 @@ def _project_overview(
 
 def _global_role_queue(context: dict, db: Session) -> dict:
     """全局模式下按用户全局角色返回角色队列。"""
-    _OWNER_REVIEW_ST = {"待确认", "待负责人审核", "已重新提交", "统筹人已反馈", "CEO已批示"}
-    _COORD_ST        = {"已转交统筹人"}
-    _FINAL_ST        = {"已入库", "已确认入库", "已确认", "已退回", "不入库", "已归档",
-                        "已撤回", "confirmed", "stored", "approved_for_storage"}
-
     is_super = context.get("can_view_all") or context.get("is_tech_admin")
     is_ceo   = context.get("is_ceo")
     owned    = bool(context.get("owned_projects"))
@@ -453,7 +493,7 @@ def _global_role_queue(context: dict, db: Session) -> dict:
     if is_super or is_ceo:
         queue_type = "pending_decisions"
         q = db.query(models.UpdateSubmission).filter(
-            models.UpdateSubmission.confirm_status.in_(_CEO_PENDING)
+            models.UpdateSubmission.confirm_status.in_(SS.WAITING_CEO_DECISION)
         )
     elif owned:
         queue_type = "pending_review"
@@ -463,7 +503,7 @@ def _global_role_queue(context: dict, db: Session) -> dict:
             rows = db.query(models.Project.id).filter(models.Project.name.in_(owned_names)).all()
             owned_proj_ids = [r[0] for r in rows]
         q = db.query(models.UpdateSubmission).filter(
-            models.UpdateSubmission.confirm_status.in_(_OWNER_REVIEW_ST),
+            models.UpdateSubmission.confirm_status.in_(SS.PENDING_OWNER_REVIEW),
         )
         if owned_proj_ids:
             q = q.filter(models.UpdateSubmission.project_id.in_(owned_proj_ids))
@@ -475,7 +515,7 @@ def _global_role_queue(context: dict, db: Session) -> dict:
             rows = db.query(models.Project.id).filter(models.Project.name.in_(coord_names)).all()
             coord_proj_ids = [r[0] for r in rows]
         q = db.query(models.UpdateSubmission).filter(
-            models.UpdateSubmission.confirm_status.in_(_COORD_ST),
+            models.UpdateSubmission.confirm_status.in_(SS.WAITING_COORDINATOR_FEEDBACK),
         )
         if coord_proj_ids:
             q = q.filter(models.UpdateSubmission.project_id.in_(coord_proj_ids))
@@ -483,7 +523,7 @@ def _global_role_queue(context: dict, db: Session) -> dict:
         queue_type = "in_progress"
         q = db.query(models.UpdateSubmission).filter(
             models.UpdateSubmission.submitter == context["name"],
-            ~models.UpdateSubmission.confirm_status.in_(_FINAL_ST),
+            ~models.UpdateSubmission.confirm_status.in_(SS.ALL_TERMINAL),
         )
 
     items = q.order_by(models.UpdateSubmission.created_at.desc()).limit(10).all()
@@ -552,7 +592,10 @@ def _global_overview(
     month_filter: str | None,
     db: Session,
 ) -> dict:
-    task_q = _apply_project_scope(db.query(models.Task), context, models.Task)
+    # 合并新旧两套权限系统，得到当前用户可见的 project_id 列表
+    visible_proj_ids = _get_visible_project_ids(context, db)
+
+    task_q = _apply_project_scope(db.query(models.Task), context, models.Task, visible_proj_ids).filter(models.Task.is_deleted == False)
     if special_project_filter:
         task_q = task_q.filter(models.Task.special_project == special_project_filter)
     if owner_filter:
@@ -560,44 +603,67 @@ def _global_overview(
     if status_filter:
         task_q = task_q.filter(models.Task.status == status_filter)
     if month_filter:
-        task_q = task_q.filter(models.Task.plan_time.like(f"{month_filter}%"))
+        task_q = task_q.filter(models.Task.plan_time.like(f"{_month_to_iso(month_filter)}%"))
     tasks = task_q.all()
 
-    grouped = defaultdict(list)
-    for task in tasks:
-        grouped[task.special_project].append(task)
+    # ── project_cards：从实际项目列表构建，兼容新旧数据 ──────────
+    # 不再依赖任务的 special_project 分组（新系统任务 special_project 可能为空）
+    if visible_proj_ids is None:
+        visible_projs = (
+            db.query(models.Project)
+            .filter_by(is_active=True)
+            .order_by(models.Project.sort_order, models.Project.id)
+            .all()
+        )
+    elif visible_proj_ids:
+        visible_projs = (
+            db.query(models.Project)
+            .filter(models.Project.id.in_(visible_proj_ids), models.Project.is_active == True)
+            .order_by(models.Project.sort_order, models.Project.id)
+            .all()
+        )
+    else:
+        visible_projs = []
 
     project_cards = []
-    for project, rows in grouped.items():
-        completed = sum(1 for t in rows if t.status == "已完成")
+    for proj in visible_projs:
+        p_task_q = db.query(models.Task).filter(_proj_or_filter(models.Task, proj.id, proj.name), models.Task.is_deleted == False)
+        if month_filter:
+            p_task_q = p_task_q.filter(models.Task.plan_time.like(f"{month_filter}%"))
+        p_tasks = p_task_q.all()
+        completed = sum(1 for t in p_tasks if (t.status or "") in _COMPLETED)
+        total = len(p_tasks)
         ach_count = (
-            _apply_project_scope(db.query(models.Achievement), context, models.Achievement)
-            .filter(models.Achievement.special_project == project)
+            db.query(models.Achievement)
+            .filter(_proj_or_filter(models.Achievement, proj.id, proj.name))
             .count()
         )
         open_issue_count = (
-            _apply_project_scope(db.query(models.Issue), context, models.Issue)
+            db.query(models.Issue)
             .filter(
-                models.Issue.special_project == project,
+                _proj_or_filter(models.Issue, proj.id, proj.name),
                 models.Issue.status.in_(["待处理", "处理中"]),
             )
             .count()
         )
+        latest = max((t.updated_at for t in p_tasks if t.updated_at), default=None)
         project_cards.append({
-            "special_project":  project,
-            "owners":           "、".join(sorted({t.owner for t in rows if t.owner})),
-            "task_count":       len(rows),
-            "completed_count":  completed,
-            "completion_rate":  round(completed / len(rows) * 100) if rows else 0,
+            "special_project":   proj.name,
+            "name":              proj.name,
+            "project_id":        proj.id,
+            "owners":            "、".join(sorted({t.owner for t in p_tasks if t.owner})),
+            "task_count":        total,
+            "completed_count":   completed,
+            "completion_rate":   round(completed / total * 100) if total else 0,
             "achievement_count": ach_count,
-            "open_issue_count": open_issue_count,
-            "latest_update":    max(t.updated_at for t in rows).isoformat(timespec="seconds"),
+            "open_issue_count":  open_issue_count,
+            "latest_update":     latest.isoformat(timespec="seconds") if latest else "",
         })
 
     status_stats = Counter(t.status for t in tasks)
     pending_tasks = [crud.to_dict(t) for t in tasks if t.status != "已完成"][:10]
 
-    issue_q    = _apply_project_scope(db.query(models.Issue), context, models.Issue).order_by(models.Issue.updated_at.desc())
+    issue_q    = _apply_project_scope(db.query(models.Issue), context, models.Issue, visible_proj_ids).order_by(models.Issue.updated_at.desc())
     issue_rows = issue_q.all()
     decisions, risks = [], []
     for row in issue_rows:
@@ -608,33 +674,24 @@ def _global_overview(
             risks.append(crud.to_dict(row))
 
     latest_achievements_q = (
-        _apply_project_scope(db.query(models.Achievement), context, models.Achievement)
+        _apply_project_scope(db.query(models.Achievement), context, models.Achievement, visible_proj_ids)
         .order_by(models.Achievement.updated_at.desc())
     )
     latest_achievements = [crud.to_dict(a) for a in latest_achievements_q.limit(10).all()]
 
     pending_confirmation_count = 0
     if can_access_confirmation_center(context):
-        _active_statuses = [
-            "待确认", "需修改", "待负责人审核", "提交人已确认", "已重新提交",
-            "已打回提交人", "已转交统筹人", "待CEO决策", "统筹人已反馈", "CEO已批示",
-        ]
         pending_confirmation_count = (
             db.query(models.UpdateSubmission)
-            .filter(models.UpdateSubmission.confirm_status.in_(_active_statuses))
+            .filter(models.UpdateSubmission.confirm_status.in_(SS.ALL_ACTIVE))
             .count()
         )
 
-    visible_projects = (
-        context["visible_projects"]
-        if not context["can_view_all"]
-        else [p[0] for p in db.query(models.Task.special_project).distinct().all()]
-    )
     visible_achievement_count = _apply_project_scope(
-        db.query(models.Achievement), context, models.Achievement
+        db.query(models.Achievement), context, models.Achievement, visible_proj_ids
     ).count()
     visible_open_issue_count = (
-        _apply_project_scope(db.query(models.Issue), context, models.Issue)
+        _apply_project_scope(db.query(models.Issue), context, models.Issue, visible_proj_ids)
         .filter(models.Issue.status.in_(["待处理", "处理中"]))
         .count()
     )
@@ -649,7 +706,7 @@ def _global_overview(
             "can_view_settings":            context.get("can_view_settings", False),
         },
         "filters": {
-            "projects":  visible_projects,
+            "projects":  [p["special_project"] for p in project_cards],
             "owners":    [p[0] for p in db.query(models.Task.owner).distinct().all() if p[0]],
             "statuses":  ["未开始", "推进中", "已完成", "延期", "暂缓"],
         },
@@ -744,20 +801,21 @@ def _build_weekly_report(
     report_month = month or f"{today.year}年{today.month}月"
 
     # ── 拉数据 ───────────────────────────────────────────────
-    task_q = _apply_project_scope(db.query(models.Task), context, models.Task)
+    visible_proj_ids = _get_visible_project_ids(context, db)
+    task_q = _apply_project_scope(db.query(models.Task), context, models.Task, visible_proj_ids).filter(models.Task.is_deleted == False)
     if project_id is not None:
         proj_name = crud.get_project_name_by_id(project_id, db) or ""
         task_q = task_q.filter(_proj_or_filter(models.Task, project_id, proj_name))
     if month:
-        task_q = task_q.filter(models.Task.plan_time.like(f"{month}%"))
+        task_q = task_q.filter(models.Task.plan_time.like(f"{_month_to_iso(month)}%"))
     tasks = task_q.all()
 
-    ach_q = _apply_project_scope(db.query(models.Achievement), context, models.Achievement)
+    ach_q = _apply_project_scope(db.query(models.Achievement), context, models.Achievement, visible_proj_ids)
     if project_id is not None:
         ach_q = ach_q.filter(_proj_or_filter(models.Achievement, project_id, proj_name))
     achs = ach_q.order_by(models.Achievement.updated_at.desc()).limit(20).all()
 
-    issue_q = _apply_project_scope(db.query(models.Issue), context, models.Issue)
+    issue_q = _apply_project_scope(db.query(models.Issue), context, models.Issue, visible_proj_ids)
     if project_id is not None:
         issue_q = issue_q.filter(_proj_or_filter(models.Issue, project_id, proj_name))
     issues = issue_q.filter(models.Issue.status.in_(["待处理", "处理中"])).order_by(models.Issue.updated_at.desc()).limit(20).all()

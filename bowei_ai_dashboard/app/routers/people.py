@@ -250,6 +250,40 @@ def delete_project(
     return {"ok": True}
 
 
+@router.post("/batch")
+def batch_create_people(
+    payload: schemas.PersonBatchPayload,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """批量导入人员，已存在的姓名跳过不报错。"""
+    _require_admin(current_user, db)
+    created, skipped_names = [], []
+    for item in payload.people:
+        name = (item.name or "").strip()
+        if not name:
+            continue
+        if db.query(models.Person).filter_by(name=name).first():
+            skipped_names.append(name)
+            continue
+        system_role = item.system_role if item.system_role in _VALID_SYSTEM_ROLES else ROLE_NORMAL
+        row = models.Person(
+            name=name,
+            role=item.role,
+            system_role=system_role,
+            department=item.department,
+            contact=item.contact,
+            permission="查看",
+            is_active=True,
+        )
+        db.add(row)
+        db.flush()
+        crud.log(db, current_user, "batch_create", "person", row.id, after={"name": name})
+        created.append(name)
+    db.commit()
+    return {"created": len(created), "skipped": len(skipped_names), "skipped_names": skipped_names, "created_names": created}
+
+
 @router.get("")
 def list_people(db: Session = Depends(get_db)):
     rows = db.query(models.Person).order_by(models.Person.is_active.desc(), models.Person.id.asc()).all()

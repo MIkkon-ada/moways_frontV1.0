@@ -10,9 +10,8 @@ from .auth import create_session, delete_session, get_session_user, verify_passw
 from .database import Base, SessionLocal, engine
 from .excel_importer import read_project_assignments
 from .llm_config import PROVIDERS, load_configs
-from .permissions import ensure_default_projects
 from .settings import get_settings
-from .routers import achievements, admin, confirmations, dashboard, issues, llm_config, logs, meetings, people, platform_settings, projects, subtasks, tasks, transcribe, updates
+from .routers import achievements, admin, confirmations, dashboard, issues, llm_config, logs, meetings, people, platform_settings, projects, setup, subtasks, tasks, transcribe, updates
 from .seed import EXCEL_SEED, seed
 
 logging.basicConfig(
@@ -24,7 +23,7 @@ logger = logging.getLogger("bowei")
 
 app = FastAPI(title="博维AI升级项目驾驶舱", version="0.3")
 
-_PUBLIC_PREFIXES = ("/api/auth/", "/api/llm-config/enabled", "/api/health", "/login")
+_PUBLIC_PREFIXES = ("/api/auth/", "/api/llm-config/enabled", "/api/health", "/api/setup", "/login", "/setup")
 
 
 @app.exception_handler(Exception)
@@ -57,13 +56,113 @@ def startup():
     from .database import _is_sqlite
     if _is_sqlite:
         with engine.connect() as _conn:
-            existing = {row[1] for row in _conn.execute(text("PRAGMA table_info(tasks)")).fetchall()}
-            if "submitter" not in existing:
+            # ── tasks 表在线迁移 ──────────────────────────────────
+            tasks_cols = {row[1] for row in _conn.execute(text("PRAGMA table_info(tasks)")).fetchall()}
+            if "submitter" not in tasks_cols:
                 try:
                     _conn.execute(text("ALTER TABLE tasks ADD COLUMN submitter VARCHAR(50) DEFAULT ''"))
                     _conn.commit()
                 except Exception:
-                    pass  # 另一个 worker 抢先写入，忽略
+                    pass
+            if "source_submission_id" not in tasks_cols:
+                try:
+                    _conn.execute(text("ALTER TABLE tasks ADD COLUMN source_submission_id INTEGER"))
+                    _conn.commit()
+                except Exception:
+                    pass
+            if "confirmed_by" not in tasks_cols:
+                try:
+                    _conn.execute(text("ALTER TABLE tasks ADD COLUMN confirmed_by VARCHAR(50) DEFAULT ''"))
+                    _conn.commit()
+                except Exception:
+                    pass
+            if "edit_count" not in tasks_cols:
+                try:
+                    _conn.execute(text("ALTER TABLE tasks ADD COLUMN edit_count INTEGER DEFAULT 0"))
+                    _conn.commit()
+                except Exception:
+                    pass
+            for col, ddl in (
+                ("is_deleted", "ALTER TABLE tasks ADD COLUMN is_deleted INTEGER DEFAULT 0"),
+                ("deleted_at", "ALTER TABLE tasks ADD COLUMN deleted_at DATETIME"),
+                ("deleted_by", "ALTER TABLE tasks ADD COLUMN deleted_by VARCHAR(50) DEFAULT ''"),
+                ("delete_reason", "ALTER TABLE tasks ADD COLUMN delete_reason TEXT DEFAULT ''"),
+                ("delete_batch_id", "ALTER TABLE tasks ADD COLUMN delete_batch_id VARCHAR(64) DEFAULT ''"),
+            ):
+                if col not in tasks_cols:
+                    try:
+                        _conn.execute(text(ddl))
+                        _conn.commit()
+                    except Exception:
+                        pass
+
+            # ── achievements 表在线迁移 ───────────────────────────
+            ach_cols = {row[1] for row in _conn.execute(text("PRAGMA table_info(achievements)")).fetchall()}
+            if "source_submission_id" not in ach_cols:
+                try:
+                    _conn.execute(text("ALTER TABLE achievements ADD COLUMN source_submission_id INTEGER"))
+                    _conn.commit()
+                except Exception:
+                    pass
+            if "confirmed_by" not in ach_cols:
+                try:
+                    _conn.execute(text("ALTER TABLE achievements ADD COLUMN confirmed_by VARCHAR(50) DEFAULT ''"))
+                    _conn.commit()
+                except Exception:
+                    pass
+            if "edit_count" not in ach_cols:
+                try:
+                    _conn.execute(text("ALTER TABLE achievements ADD COLUMN edit_count INTEGER DEFAULT 0"))
+                    _conn.commit()
+                except Exception:
+                    pass
+
+            # ── issues 表在线迁移 ─────────────────────────────────
+            issue_cols = {row[1] for row in _conn.execute(text("PRAGMA table_info(issues)")).fetchall()}
+            if "source_submission_id" not in issue_cols:
+                try:
+                    _conn.execute(text("ALTER TABLE issues ADD COLUMN source_submission_id INTEGER"))
+                    _conn.commit()
+                except Exception:
+                    pass
+            if "confirmed_by" not in issue_cols:
+                try:
+                    _conn.execute(text("ALTER TABLE issues ADD COLUMN confirmed_by VARCHAR(50) DEFAULT ''"))
+                    _conn.commit()
+                except Exception:
+                    pass
+            if "edit_count" not in issue_cols:
+                try:
+                    _conn.execute(text("ALTER TABLE issues ADD COLUMN edit_count INTEGER DEFAULT 0"))
+                    _conn.commit()
+                except Exception:
+                    pass
+
+            # ── subtasks 表在线迁移 ───────────────────────────────
+            sub_cols = {row[1] for row in _conn.execute(text("PRAGMA table_info(subtasks)")).fetchall()}
+            for col, ddl in (
+                ("is_deleted", "ALTER TABLE subtasks ADD COLUMN is_deleted INTEGER DEFAULT 0"),
+                ("deleted_at", "ALTER TABLE subtasks ADD COLUMN deleted_at DATETIME"),
+                ("deleted_by", "ALTER TABLE subtasks ADD COLUMN deleted_by VARCHAR(50) DEFAULT ''"),
+                ("delete_reason", "ALTER TABLE subtasks ADD COLUMN delete_reason TEXT DEFAULT ''"),
+                ("delete_batch_id", "ALTER TABLE subtasks ADD COLUMN delete_batch_id VARCHAR(64) DEFAULT ''"),
+                ("deleted_by_parent_id", "ALTER TABLE subtasks ADD COLUMN deleted_by_parent_id INTEGER"),
+            ):
+                if col not in sub_cols:
+                    try:
+                        _conn.execute(text(ddl))
+                        _conn.commit()
+                    except Exception:
+                        pass
+
+            # ── operation_logs 表在线迁移 ─────────────────────────
+            log_cols = {row[1] for row in _conn.execute(text("PRAGMA table_info(operation_logs)")).fetchall()}
+            if "note" not in log_cols:
+                try:
+                    _conn.execute(text("ALTER TABLE operation_logs ADD COLUMN note TEXT DEFAULT ''"))
+                    _conn.commit()
+                except Exception:
+                    pass
 
     # 清理过期 session（防止 auth_sessions 表长期无限增长）
     with SessionLocal() as _db:
@@ -80,11 +179,6 @@ def startup():
         finally:
             db.close()
 
-    db = SessionLocal()
-    try:
-        ensure_default_projects(db)
-    finally:
-        db.close()
     logger.info("博维AI驾驶舱启动完成")
 
 
@@ -204,6 +298,7 @@ def project_assignments():
     return []
 
 
+app.include_router(setup.router)
 app.include_router(dashboard.router)
 app.include_router(updates.router)
 app.include_router(confirmations.router)

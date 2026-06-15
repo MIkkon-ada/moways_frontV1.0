@@ -97,7 +97,7 @@ export function LoginRoute() {
 
   if (authState === 'authenticated') {
     const pid = getPreferredProjectId()
-    return <Navigate to={pid !== null ? `/project/${pid}` : '/projects'} replace />
+    return <Navigate to={pid !== null ? `/project/${pid}` : '/home'} replace />
   }
 
   return <LoginPanel />
@@ -105,15 +105,10 @@ export function LoginRoute() {
 
 export function ProjectsLanding() {
   const { projects } = useProject()
-  // 有项目直接跳入，不再显示选择 UI
   if (projects.length > 0) {
     return <Navigate to={`/project/${projects[0].id}`} replace />
   }
-  return (
-    <div className="min-h-screen flex items-center justify-center" style={{ background: '#F1F5F9' }}>
-      <div className="text-center text-slate-400 text-sm">暂无可用项目，请联系管理员</div>
-    </div>
-  )
+  return <Navigate to="/home" replace />
 }
 
 export function RootRedirect() {
@@ -124,7 +119,7 @@ export function RootRedirect() {
   }
 
   const pid = getPreferredProjectId()
-  return <Navigate to={pid !== null ? `/project/${pid}` : '/projects'} replace />
+  return <Navigate to={pid !== null ? `/project/${pid}` : '/home'} replace />
 }
 
 // Kept for backward compatibility

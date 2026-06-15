@@ -34,14 +34,21 @@ export function createUpdate(payload: CreateUpdatePayload): Promise<CreateUpdate
 
 export type UpdateHistoryItem = {
   id: number
+  project_id?: number | null
   submitter: string
   source_type: string
+  title?: string
   transcript_text: string
   confirm_status: string
   confidence: number | null
+  special_project?: string
   created_at: string
   updated_at?: string
   ai_result_json?: string
+  reject_reason?: string
+  coordinator_note?: string
+  ceo_note?: string
+  [key: string]: unknown
 }
 
 export type UpdateDetail = UpdateHistoryItem & {
@@ -57,6 +64,10 @@ export type UpdateDetail = UpdateHistoryItem & {
 
 export function fetchUpdates(projectId: number): Promise<UpdateHistoryItem[]> {
   return apiGet<UpdateHistoryItem[]>(`/api/updates?project_id=${projectId}`)
+}
+
+export function fetchMyUpdates(): Promise<UpdateHistoryItem[]> {
+  return apiGet<UpdateHistoryItem[]>('/api/updates?mine=true')
 }
 
 export function getUpdate(id: number): Promise<UpdateDetail> {

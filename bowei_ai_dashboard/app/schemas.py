@@ -95,6 +95,18 @@ class PersonPayload(BaseModel):
     collaborated_projects: list[str] = []
 
 
+class PersonBatchItem(BaseModel):
+    name: str
+    role: str = ""
+    system_role: str = "普通成员"
+    department: str = ""
+    contact: str = ""
+
+
+class PersonBatchPayload(BaseModel):
+    people: list[PersonBatchItem]
+
+
 class ProjectPayload(BaseModel):
     name: str
     coordinator: str = ""
@@ -182,3 +194,26 @@ class SubTaskPayload(BaseModel):
     status: str = "未开始"
     completion_criteria: str = ""
     notes: str = ""
+
+
+class TaskOutlineExtractRequest(BaseModel):
+    project_id: int | None = None
+    text: str
+    llm_provider: str | None = None
+    project_names: list[str] = []
+
+
+class TaskDraft(BaseModel):
+    key_task: str
+    owner: str = ""
+    coordinator: str = ""
+    collaborators: str = ""
+    plan_time: str = ""
+    status: str = "未开始"
+    key_achievement: str = ""
+    completion_standard: str = ""
+
+
+class TaskBatchCreateRequest(BaseModel):
+    project_id: int
+    tasks: list[TaskDraft]

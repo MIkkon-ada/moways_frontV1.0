@@ -792,3 +792,65 @@ def archive_project(
     db.commit()
 
     return {"ok": True, "project_id": project_id, "status": "archived"}
+
+
+@router.get("/{project_id}/capabilities")
+def project_capabilities(
+    project_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """
+    返回当前用户在该项目的能力标志位。
+    前端直接消费，无需自行推算角色 → 权限逻辑。
+
+    Fields:
+      roles            当前用户在项目中的角色列表
+      canSubmit        可提交进展更新
+      canConfirm       可确认/打回/转交提交
+      canCoordinate    可作为统筹人提供反馈
+      canEscalateToCEO 可上报 CEO 决策
+      canCeoDecide     可作为项目CEO批示
+      canViewCenter    可进入确认中心
+      pendingCount     待处理（ALL_ACTIVE）提交数
+    """
+    from ..permissions import (
+        can_access_confirmation_center,
+        can_confirm_submission_by_project,
+        can_coordinator_feedback_by_project,
+        can_escalate_to_ceo_by_project,
+        can_ceo_decide_by_project,
+    )
+    from ..services.policy import (
+        user_roles_in_project,
+        can_submit_to_project,
+    )
+    from ..domain import submission_status as SS
+
+    context = get_user_context_from_db(current_user, db)
+
+    project = db.get(models.Project, project_id)
+    if not project:
+        raise HTTPException(404, "project not found")
+
+    roles = sorted(user_roles_in_project(context, project_id, db))
+
+    pending_count = (
+        db.query(models.UpdateSubmission)
+        .filter(
+            models.UpdateSubmission.project_id == project_id,
+            models.UpdateSubmission.confirm_status.in_(list(SS.ALL_ACTIVE)),
+        )
+        .count()
+    )
+
+    return {
+        "roles": roles,
+        "canSubmit":        can_submit_to_project(context, project_id, db),
+        "canConfirm":       can_confirm_submission_by_project(context, project_id, db),
+        "canCoordinate":    can_coordinator_feedback_by_project(context, project_id, db),
+        "canEscalateToCEO": can_escalate_to_ceo_by_project(context, project_id, db),
+        "canCeoDecide":     can_ceo_decide_by_project(context, project_id, db),
+        "canViewCenter":    can_access_confirmation_center(context),
+        "pendingCount":     pending_count,
+    }
