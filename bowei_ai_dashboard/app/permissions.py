@@ -310,19 +310,34 @@ def get_user_context_from_db(name: str, db) -> dict:
     person_id_val: int | None = None
     system_role = ROLE_NORMAL
     is_admin = False
+    display_name = name
 
     try:
-        row = db.execute(
+        account_row = db.execute(
+            text(
+                "SELECT a.person_id, COALESCE(a.is_tech_admin, 0), p.name, p.system_role, COALESCE(p.is_admin, 0) "
+                "FROM accounts a LEFT JOIN people p ON p.id = a.person_id "
+                "WHERE a.username=:name AND a.status='active'"
+            ),
+            {"name": name},
+        ).fetchone()
+        if account_row and account_row[0]:
+            person_id_val = int(account_row[0])
+            display_name = account_row[2] or name
+            system_role = account_row[3] or ROLE_NORMAL
+            is_admin = bool(account_row[1]) or bool(account_row[4])
+        else:
+            row = db.execute(
             text(
                 "SELECT id, system_role, COALESCE(is_admin, 0) "
                 "FROM people WHERE name=:name AND is_active=1"
             ),
             {"name": name},
-        ).fetchone()
-        if row:
-            person_id_val = int(row[0])
-            system_role   = row[1] or ROLE_NORMAL
-            is_admin      = bool(row[2])
+            ).fetchone()
+            if row:
+                person_id_val = int(row[0])
+                system_role   = row[1] or ROLE_NORMAL
+                is_admin      = bool(row[2])
         # 兜底：确保只允许合法的全局角色值
         if system_role not in (ROLE_CEO, ROLE_PROCESS_GUARD, ROLE_SUPER_ADMIN, ROLE_NORMAL):
             system_role = ROLE_NORMAL
@@ -341,7 +356,7 @@ def get_user_context_from_db(name: str, db) -> dict:
         project_member_roles = roles_map if roles_map else None
 
     return _build_context(
-        name, system_role, project_areas, is_admin,
+        display_name, system_role, project_areas, is_admin,
         person_id=person_id_val,
         project_member_roles=project_member_roles,
     )

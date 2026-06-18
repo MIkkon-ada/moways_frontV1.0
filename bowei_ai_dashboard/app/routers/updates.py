@@ -7,9 +7,15 @@ from sqlalchemy.orm import Session
 from .. import crud, models, schemas
 from ..database import get_db
 from ..domain import submission_status as SS
+from sqlalchemy import or_ as sql_or
+
 from ..permissions import (
+    PROJECT_ROLE_COORDINATOR,
+    PROJECT_ROLE_OWNER,
     ROLE_CEO,
+    can_view_project,
     can_view_submission,
+    get_all_project_roles,
     get_current_user_name,
     get_person_id,
     get_user_context_from_db,
@@ -42,6 +48,98 @@ def _ceo_name(db: Session) -> str:
 
 # ── 端点 ───────────────────────────────────────────────────────
 
+@router.get("/voice-context")
+def get_voice_context(
+    project_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """
+    语音/文字更新提取前的工作上下文候选池（权限敏感）。
+
+    候选范围与用户角色强绑定：
+    - 超级管理员 / 项目 owner / coordinator → 项目下全部活跃子任务
+    - 关键任务 owner（Task.owner）→ 该关键任务下的子任务
+    - 普通成员（member）→ assignee == 当前用户 的子任务
+
+    不得返回当前用户无权提交进展的子任务，确保 AI 匹配候选不越权。
+    """
+    context = get_user_context_from_db(current_user, db)
+    # assignee / Task.owner fields store the person's display name, not the login username
+    display_name: str = context.get("name") or current_user
+    proj = db.get(models.Project, project_id)
+    if not proj:
+        raise HTTPException(404, "project not found")
+    if not can_view_project(context, proj.name or ""):
+        raise HTTPException(403, "permission denied")
+
+    person_id = context.get("person_id")
+    is_project_manager = False
+    user_project_role: str | None = None
+
+    if context.get("can_view_all"):
+        is_project_manager = True
+        user_project_role = "owner"
+    else:
+        member_roles = get_all_project_roles(person_id, project_id, db) if person_id else []
+        if member_roles:
+            if "owner" in member_roles:
+                is_project_manager = True
+                user_project_role = "owner"
+            elif "coordinator" in member_roles:
+                is_project_manager = True
+                user_project_role = "coordinator"
+        else:
+            # Fallback: old string-based context for un-migrated projects
+            old_role = context.get("project_roles", {}).get(proj.name or "")
+            if old_role == PROJECT_ROLE_OWNER:
+                is_project_manager = True
+                user_project_role = "owner"
+            elif old_role == PROJECT_ROLE_COORDINATOR:
+                is_project_manager = True
+                user_project_role = "coordinator"
+
+    q = (
+        db.query(models.SubTask, models.Task)
+        .join(models.Task, models.SubTask.task_id == models.Task.id)
+        .filter(
+            models.SubTask.is_deleted.is_(False),
+            models.Task.is_deleted.is_(False),
+            models.Task.project_id == project_id,
+            models.SubTask.status.notin_(["已完成", "完成"]),
+        )
+    )
+
+    if not is_project_manager:
+        # Regular member: own assigned subtasks + subtasks under their own key tasks
+        q = q.filter(
+            sql_or(
+                models.SubTask.assignee == display_name,
+                models.Task.owner == display_name,
+            )
+        )
+
+    rows = q.order_by(models.Task.id.asc(), models.SubTask.created_at.asc()).all()
+
+    result = []
+    for subtask, task in rows:
+        if is_project_manager:
+            relation = user_project_role or "coordinator"
+        elif task.owner == display_name:
+            relation = "task_owner"
+        else:
+            relation = "subtask_assignee"
+
+        d = crud.to_dict(subtask)
+        d["parent_key_task"] = task.key_task or ""
+        d["parent_task_id"] = task.id
+        d["parent_project_id"] = task.project_id
+        d["user_relation"] = relation
+        result.append(d)
+
+    return result
+
+
 @router.post("/extract")
 def extract(
     payload: schemas.ExtractRequest,
@@ -50,11 +148,13 @@ def extract(
 ):
     """纯 AI 提取，不创建提交记录，不要求 project_id。语音更新模块专用，强制走 LLM。"""
     _ = current_user
+    user_subtasks = [s.model_dump() for s in payload.user_subtasks] if payload.user_subtasks else None
     try:
         result = extract_update(
             payload.source_type, payload.transcript_text,
             payload.submitter, payload.llm_provider, _ceo_name(db),
             require_llm=True,
+            user_subtasks=user_subtasks,
         )
     except RuntimeError as exc:
         raise HTTPException(502, str(exc))
@@ -100,17 +200,17 @@ def create_update(
         if dup_provider == current_provider:
             return {"submission": crud.to_dict(dup), "suggestion": json.loads(dup.ai_result_json or "{}")}
 
-    # ── 4. AI 提取 ────────────────────────────────────────────────
-    # 指定了 LLM provider 就强制走 LLM，失败直接报错不降级
-    _require_llm = bool(payload.llm_provider and payload.llm_provider != "rules")
-    try:
+    # ── 4. 确定 AI 结果 ───────────────────────────────────────────
+    # 标准流程：前端已通过 /extract 完成 LLM 提取并随 human_result 传入，直接复用
+    # 无 human_result 时（直接调接口）用规则引擎快速兜底，不再重复调 LLM
+    if payload.human_result or payload.edited_suggestion:
+        result = dict(payload.human_result or payload.edited_suggestion)
+    else:
         result = extract_update(
             payload.source_type, payload.transcript_text,
-            submitter, payload.llm_provider, _ceo_name(db),
-            require_llm=_require_llm,
+            submitter, None, _ceo_name(db),
+            require_llm=False,
         )
-    except RuntimeError as exc:
-        raise HTTPException(502, str(exc))
     human_result = payload.human_result or payload.edited_suggestion or result
 
     # ── 5. 回填 special_project 到 human_result JSON ─────────────
@@ -184,7 +284,7 @@ def list_updates(
 
     rows = db.query(models.UpdateSubmission).order_by(
         models.UpdateSubmission.created_at.desc()
-    ).all()
+    ).limit(500).all()
 
     result = []
     for row in rows:

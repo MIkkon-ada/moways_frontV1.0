@@ -59,6 +59,32 @@ export function archiveProject(projectId: number): Promise<{ ok: boolean; status
   return apiPost(`/api/projects/${projectId}/archive`)
 }
 
+export type BatchImportRow = {
+  project_name: string
+  key_task: string
+  key_achievement?: string
+  completion_standard?: string
+  coordinator?: string
+  owner?: string
+  collaborators?: string
+  plan_time?: string
+  status?: string
+  issue?: string
+}
+
+export type BatchImportResult = {
+  ok: boolean
+  projects_created: number
+  projects_matched: number
+  tasks_created: number
+  issues_created: number
+  skipped_rows: number
+}
+
+export function batchImportProjects(rows: BatchImportRow[]): Promise<BatchImportResult> {
+  return apiPost<BatchImportResult>('/api/projects/batch-import', { rows })
+}
+
 // ── 4A：项目成员管理（super_admin）──────────────────────────
 
 export type MemberAddPayload = {

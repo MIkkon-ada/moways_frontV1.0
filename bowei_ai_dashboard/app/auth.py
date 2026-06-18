@@ -1,22 +1,27 @@
 """
 Session-based authentication.
-Passwords are stored as SHA-256 hex digests in passwords.json (project root).
-Sessions are stored in the database so multiple worker processes share the same login state.
+New accounts are stored in the database. passwords.json is retained as a
+compatibility fallback for legacy local deployments.
+
+Password hashing: new hashes use bcrypt. Legacy SHA-256 hashes (64-char hex)
+are accepted and transparently upgraded to bcrypt on next successful login.
 """
 import hashlib
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta
+
+import bcrypt
 
 from .database import SessionLocal
-from .models import AuthSession
-from .settings import get_auth_passwords, get_settings
+from .models import Account, AuthSession, Person
+from .settings import get_auth_passwords, get_settings, legacy_password_login_enabled
 
 IMPERSONATE_ALLOWED = {"mowasyadmin"}
+_MAX_FAILED_ATTEMPTS = 5
+_LOCKOUT_MINUTES = 15
 
 
-def _now():
-    from datetime import datetime
-
+def _now() -> datetime:
     return datetime.utcnow()
 
 
@@ -24,12 +29,93 @@ def _sha256(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+def _is_bcrypt(h: str) -> bool:
+    return h.startswith(("$2b$", "$2a$", "$2y$"))
+
+
+def _bcrypt_verify(raw: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(raw.encode(), hashed.encode())
+    except Exception:
+        return False
+
+
+def _check_password(raw: str, stored_hash: str) -> bool:
+    if _is_bcrypt(stored_hash):
+        return _bcrypt_verify(raw, stored_hash)
+    return secrets.compare_digest(stored_hash, _sha256(raw))
+
+
 def verify_password(username: str, password: str) -> bool:
+    now = _now()
+    with SessionLocal() as db:
+        account = db.query(Account).filter(Account.username == username).first()
+        if account:
+            if account.status != "active":
+                return False
+            # 锁定检查
+            if account.locked_until and account.locked_until > now:
+                return False
+            ok = _check_password(password, account.password_hash or "")
+            if ok:
+                account.failed_login_count = 0
+                account.locked_until = None
+                account.last_login_at = now
+                # 旧 SHA-256 哈希透明升级到 bcrypt
+                if not _is_bcrypt(account.password_hash or ""):
+                    account.password_hash = hash_password(password)
+            else:
+                count = (account.failed_login_count or 0) + 1
+                account.failed_login_count = count
+                if count >= _MAX_FAILED_ATTEMPTS:
+                    account.locked_until = now + timedelta(minutes=_LOCKOUT_MINUTES)
+            db.commit()
+            return ok
+
+    if not legacy_password_login_enabled():
+        return False
+
     store = get_auth_passwords()
     expected = store.get(username)
     if not expected:
         return False
-    return secrets.compare_digest(expected, _sha256(password))
+    ok = _check_password(password, expected)
+    if ok:
+        _ensure_legacy_account(username, expected)
+    return ok
+
+
+def login_block_reason(username: str) -> tuple[int, str] | None:
+    now = _now()
+    with SessionLocal() as db:
+        account = db.query(Account).filter(Account.username == username).first()
+        if not account:
+            return None
+        if account.status != "active":
+            return 403, "账号已禁用，请联系管理员"
+        if account.locked_until and account.locked_until > now:
+            return 423, "密码错误次数过多，请稍后再试"
+    return None
+
+
+def _ensure_legacy_account(username: str, password_hash: str) -> None:
+    # 将 passwords.json 里的账号迁移进数据库，保留原有哈希（SHA-256）。
+    # 下次该账号成功登录时，verify_password 会自动把哈希升级到 bcrypt。
+    with SessionLocal() as db:
+        if db.query(Account).filter(Account.username == username).first():
+            return
+        person = db.query(Person).filter(Person.name == username).first()
+        account = Account(
+            username=username,
+            password_hash=password_hash,
+            person_id=person.id if person else None,
+            status="active",
+            is_tech_admin=bool(person.is_admin) if person else False,
+            last_login_at=_now(),
+            last_password_changed_at=_now(),
+        )
+        db.add(account)
+        db.commit()
 
 
 def _delete_expired_sessions(db, now=None):
@@ -83,6 +169,15 @@ def delete_session(session_id: str) -> None:
             db.commit()
 
 
+def invalidate_user_sessions(username: str, except_session_id: str | None = None) -> None:
+    """改密后清除该用户的所有 session（可保留当前 session）。"""
+    with SessionLocal() as db:
+        q = db.query(AuthSession).filter(AuthSession.username == username)
+        if except_session_id:
+            q = q.filter(AuthSession.session_id != except_session_id)
+        q.delete(synchronize_session=False)
+        db.commit()
+
+
 def hash_password(raw: str) -> str:
-    """Utility: generate the hash to store in passwords.json."""
-    return _sha256(raw)
+    return bcrypt.hashpw(raw.encode(), bcrypt.gensalt()).decode()

@@ -59,6 +59,15 @@ def init(payload: InitRequest, db: Session = Depends(get_db)):
         is_active=True,
     )
     db.add(person)
+    db.flush()
+    db.add(models.Account(
+        username=payload.username,
+        password_hash=hash_password(payload.password),
+        person_id=person.id,
+        status="active",
+        is_tech_admin=True,
+        last_password_changed_at=person.created_at,
+    ))
 
     # 覆盖写入 passwords.json，只保留这一个新管理员，清除所有旧账号
     _PASSWORDS_FILE.write_text(

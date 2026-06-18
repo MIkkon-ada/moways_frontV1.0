@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
 from ..database import get_db
+from ..domain import issue_flow as IF
 from ..permissions import (
     PROJECT_ROLE_COORDINATOR,
     PROJECT_ROLE_OWNER,
@@ -23,6 +24,21 @@ _CLOSED_STATUSES = {"已关闭", "已决策", "已解决", "关闭"}
 
 # ── 写权限：owner 或 coordinator 可直接编辑已入库事项（Path B）────
 _WRITE_ROLES = {"owner", "coordinator"}
+
+
+def _check_owner_or_admin(context: dict, row: models.Issue, db: Session) -> None:
+    """仅 tech_admin 或项目 owner（不含 coordinator / project_ceo）可执行写操作。"""
+    if context.get("is_tech_admin"):
+        return
+    project_id = _row_project_id(row, db)
+    person_id = context.get("person_id")
+    if project_id is not None and person_id is not None:
+        if PROJECT_ROLE_OWNER in set(get_all_project_roles(person_id, project_id, db)):
+            return
+    proj_name = (row.special_project or "").strip()
+    if proj_name and proj_name in context.get("owned_projects", []):
+        return
+    raise HTTPException(403, "permission denied — 仅项目负责人（owner）或技术管理员可执行此操作")
 
 
 def _check_write(context: dict, project_id: int | None, proj_name: str, db: Session) -> None:
@@ -57,17 +73,22 @@ def _row_project_id(row: models.Issue, db: Session) -> int | None:
 # ── 业务辅助 ──────────────────────────────────────────────────
 
 def _is_decision_issue(row: models.Issue) -> bool:
-    issue_type = (row.issue_type or "").strip()
     need_decision_by = (row.need_decision_by or "").strip()
-    return "决策" in issue_type or bool(need_decision_by)
+    return IF.normalize_type(row.issue_type) == IF.TYPE_DECISION or bool(need_decision_by)
 
 
 def _can_view_issue_row(context: dict, row: models.Issue) -> bool:
     if not can_view_project(context, row.special_project or ""):
         return False
-    if _is_decision_issue(row):
-        return can_view_issue_decisions(context)
-    return can_view_issue_risks(context)
+    if not _is_decision_issue(row):
+        return can_view_issue_risks(context)
+    # Decision-type issue:
+    # Global access (CEO / tech_admin)
+    if can_view_issue_decisions(context):
+        return True
+    # Project owner sees ALL issue types in their own project
+    proj_name = (row.special_project or "").strip()
+    return bool(proj_name) and proj_name in context.get("owned_projects", [])
 
 
 def _sync_issue_closed_at(row: models.Issue) -> None:
@@ -107,7 +128,7 @@ def list_issues(
     if effective_project_id is not None:
         filter_proj_name = crud.get_project_name_by_id(effective_project_id, db) or special_project
 
-    rows = db.query(models.Issue).order_by(models.Issue.updated_at.desc()).all()
+    rows = db.query(models.Issue).order_by(models.Issue.updated_at.desc()).limit(500).all()
     result = []
     for row in rows:
         if not _can_view_issue_row(context, row):
@@ -122,12 +143,15 @@ def list_issues(
                 continue
 
         if issue_type:
-            if issue_type in {"决策", "decision"} and not _is_decision_issue(row):
-                continue
-            if issue_type in {"问题", "风险", "problem"} and _is_decision_issue(row):
-                continue
-            if issue_type not in {"决策", "decision", "问题", "风险", "problem"} and (row.issue_type or "").strip() != issue_type:
-                continue
+            if issue_type in {"需决策", "决策", "decision"}:
+                if not _is_decision_issue(row):
+                    continue
+            elif issue_type == "problem":
+                if _is_decision_issue(row):
+                    continue
+            else:
+                if IF.normalize_type(row.issue_type) != IF.normalize_type(issue_type):
+                    continue
         if owner and row.owner != owner:
             continue
         if priority and row.priority != priority:
@@ -155,11 +179,19 @@ def create_issue(
     proj_name = crud.get_project_name_by_id(effective_project_id, db) or payload.special_project or ""
     _check_write(context, effective_project_id, proj_name, db)
 
-    if "决策" in (payload.issue_type or "") and not can_view_issue_decisions(context):
+    normalized_type = IF.normalize_type(payload.issue_type)
+    if normalized_type == IF.TYPE_DECISION and not can_view_issue_decisions(context):
         raise HTTPException(403, "permission denied")
 
     data = {k: v for k, v in payload.dict().items() if k != "project_id"}
     row = models.Issue(**data)
+    row.issue_type = normalized_type
+    # Derive status: normalize explicit value, then apply type-specific default
+    # when status is still the generic "待处理" (schema default or explicit).
+    normalized_status = IF.normalize_status(payload.status)
+    if normalized_status == IF.STATUS_PENDING:
+        normalized_status = IF.default_status_for_type(normalized_type)
+    row.status = normalized_status
     row.project_id = effective_project_id
     if not row.special_project:
         row.special_project = proj_name
@@ -206,6 +238,10 @@ def update_issue(
 
     before = crud.to_dict(row)
     update_data = {k: v for k, v in payload.dict().items() if k != "project_id"}
+    if "issue_type" in update_data and update_data["issue_type"]:
+        update_data["issue_type"] = IF.normalize_type(update_data["issue_type"])
+    if "status" in update_data and update_data["status"]:
+        update_data["status"] = IF.normalize_status(update_data["status"])
     crud.update_model(row, update_data)
     new_pid = resolve_project_id(payload.special_project, payload.project_id, db)
     if new_pid is not None:
@@ -259,11 +295,115 @@ def patch_status(
     _check_write(context, project_id, row.special_project or "", db)
 
     before_status = row.status
-    row.status = payload.status
+    row.status = IF.normalize_status(payload.status)
     _sync_issue_closed_at(row)
     row.edit_count = (row.edit_count or 0) + 1
     crud.log(db, current_user, "更新问题状态", "issue", row.id,
              {"status": before_status}, {"status": payload.status},
              project_id=project_id)
+    db.commit()
+    return crud.to_dict(row)
+
+
+@router.patch("/{row_id}/resolve")
+def resolve_issue(
+    row_id: int,
+    payload: schemas.ResolveRequest,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    context = get_user_context_from_db(current_user, db)
+    row = db.get(models.Issue, row_id)
+    if not row:
+        raise HTTPException(404, "issue not found")
+    if not _can_view_issue_row(context, row):
+        raise HTTPException(403, "permission denied")
+    _check_owner_or_admin(context, row, db)
+    before = crud.to_dict(row)
+    row.status = IF.STATUS_RESOLVED
+    if payload.resolution:
+        row.resolution = payload.resolution
+    _sync_issue_closed_at(row)
+    row.edit_count = (row.edit_count or 0) + 1
+    project_id = _row_project_id(row, db)
+    crud.log(db, current_user, "标记已解决", "issue", row.id, before, crud.to_dict(row), project_id=project_id)
+    db.commit()
+    return crud.to_dict(row)
+
+
+@router.patch("/{row_id}/close")
+def close_issue(
+    row_id: int,
+    payload: schemas.CloseRequest,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    context = get_user_context_from_db(current_user, db)
+    row = db.get(models.Issue, row_id)
+    if not row:
+        raise HTTPException(404, "issue not found")
+    if not _can_view_issue_row(context, row):
+        raise HTTPException(403, "permission denied")
+    _check_owner_or_admin(context, row, db)
+    before = crud.to_dict(row)
+    row.status = IF.STATUS_CLOSED
+    if payload.reason:
+        row.resolution = payload.reason
+    _sync_issue_closed_at(row)
+    row.edit_count = (row.edit_count or 0) + 1
+    project_id = _row_project_id(row, db)
+    crud.log(db, current_user, "关闭问题", "issue", row.id, before, crud.to_dict(row), project_id=project_id)
+    db.commit()
+    return crud.to_dict(row)
+
+
+@router.patch("/{row_id}/assign-helper")
+def assign_helper(
+    row_id: int,
+    payload: schemas.AssignHelperRequest,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    context = get_user_context_from_db(current_user, db)
+    row = db.get(models.Issue, row_id)
+    if not row:
+        raise HTTPException(404, "issue not found")
+    if not _can_view_issue_row(context, row):
+        raise HTTPException(403, "permission denied")
+    _check_owner_or_admin(context, row, db)
+    before = crud.to_dict(row)
+    row.helper = payload.helper
+    row.edit_count = (row.edit_count or 0) + 1
+    project_id = _row_project_id(row, db)
+    crud.log(db, current_user, "指派协助人", "issue", row.id, before,
+             {"helper": payload.helper}, project_id=project_id)
+    db.commit()
+    return crud.to_dict(row)
+
+
+@router.patch("/{row_id}/request-ceo")
+def request_ceo(
+    row_id: int,
+    payload: schemas.RequestCeoRequest,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    context = get_user_context_from_db(current_user, db)
+    row = db.get(models.Issue, row_id)
+    if not row:
+        raise HTTPException(404, "issue not found")
+    if not _can_view_issue_row(context, row):
+        raise HTTPException(403, "permission denied")
+    _check_owner_or_admin(context, row, db)
+    before = crud.to_dict(row)
+    row.issue_type = IF.TYPE_DECISION
+    row.status = IF.STATUS_PENDING_DECISION
+    row.need_decision_by = payload.need_decision_by
+    if payload.note:
+        existing = (row.resolution or "").strip()
+        row.resolution = (existing + "\n" + payload.note).strip() if existing else payload.note
+    row.edit_count = (row.edit_count or 0) + 1
+    project_id = _row_project_id(row, db)
+    crud.log(db, current_user, "上报CEO决策", "issue", row.id, before, crud.to_dict(row), project_id=project_id)
     db.commit()
     return crud.to_dict(row)

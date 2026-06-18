@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Navigate, useLocation } from 'react-router-dom'
 import { useProject } from '../../context/ProjectContext'
 import { CenterMessage } from '../../layouts/AppLayout'
 
@@ -8,7 +8,8 @@ type RequireAuthProps = {
 }
 
 export function RequireAuth({ children }: RequireAuthProps) {
-  const { authState } = useProject()
+  const { authState, currentUser } = useProject()
+  const location = useLocation()
 
   if (authState === 'loading') {
     return <CenterMessage title="加载中..." />
@@ -16,6 +17,11 @@ export function RequireAuth({ children }: RequireAuthProps) {
 
   if (authState === 'unauthenticated') {
     return <Navigate to="/login" replace />
+  }
+
+  // 强制改密：不在改密页时拦截
+  if (currentUser?.must_change_password && location.pathname !== '/change-password') {
+    return <Navigate to="/change-password" replace />
   }
 
   return <>{children}</>

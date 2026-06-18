@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.domain.task_status import derive_parent_status
+from app.domain import task_status as TS
 from app.database import SessionLocal
 from app.models import SubTask, Task
 from test_core_business_regressions import case_data, client_pool  # noqa: F401
@@ -31,6 +32,7 @@ def test_derive_parent_status_from_subtasks():
 
 
 def test_project_member_can_create_subtask_and_outsider_cannot(case_data, client_pool):
+    """F: member 角色不能直接创建子任务；owner 可以；outsider 仍被拒绝。"""
     owner = client_pool(case_data.owner)
     member = client_pool(case_data.member)
     outsider = client_pool(case_data.outsider)
@@ -39,17 +41,30 @@ def test_project_member_can_create_subtask_and_outsider_cannot(case_data, client
     assert task_resp.status_code == 200, task_resp.json()
     task_id = task_resp.json()["id"]
 
+    # F: member（role=member）不再允许直接创建子任务
     member_resp = member.post(
         f"/api/tasks/{task_id}/subtasks",
         json={
-            "title": "成员提交执行动作",
+            "title": "成员不能直接创建子任务",
             "assignee": case_data.member,
             "plan_time": "2026-06",
             "status": "未开始",
             "completion_criteria": "提交可验收结果",
         },
     )
-    assert member_resp.status_code == 200, member_resp.json()
+    assert member_resp.status_code == 403, member_resp.json()
+
+    # owner 可以直接创建
+    owner_resp = owner.post(
+        f"/api/tasks/{task_id}/subtasks",
+        json={
+            "title": "负责人直接创建的子任务",
+            "assignee": case_data.member,
+            "plan_time": "2026-06",
+            "status": "进行中",
+        },
+    )
+    assert owner_resp.status_code == 200, owner_resp.json()
 
     outsider_resp = outsider.post(
         f"/api/tasks/{task_id}/subtasks",
@@ -64,14 +79,15 @@ def test_project_member_can_create_subtask_and_outsider_cannot(case_data, client
 
 
 def test_subtask_status_syncs_parent_key_task_status(case_data, client_pool):
+    """F: owner 创建子任务；owner 直接变更状态触发父级同步；所有子任务完成后关键任务不自动关闭。"""
     owner = client_pool(case_data.owner)
-    member = client_pool(case_data.member)
 
     task_resp = owner.post("/api/tasks", json=_task_payload(case_data))
     assert task_resp.status_code == 200, task_resp.json()
     task_id = task_resp.json()["id"]
 
-    sub1 = member.post(
+    # F: 只有 owner/coordinator 可直接创建子任务
+    sub1 = owner.post(
         f"/api/tasks/{task_id}/subtasks",
         json={"title": "动作一", "assignee": case_data.member, "plan_time": "2026-06", "status": "进行中"},
     )
@@ -81,39 +97,45 @@ def test_subtask_status_syncs_parent_key_task_status(case_data, client_pool):
     assert task_after_active.status_code == 200, task_after_active.json()
     assert task_after_active.json()["status"] == "进行中"
 
-    sub2 = member.post(
+    sub2 = owner.post(
         f"/api/tasks/{task_id}/subtasks",
-        json={"title": "动作二", "assignee": case_data.member, "plan_time": "2026-06", "status": "未开始"},
+        json={"title": "动作二", "assignee": case_data.member, "plan_time": "2026-06", "status": "进行中"},
     )
     assert sub2.status_code == 200, sub2.json()
 
-    done1 = member.patch(f"/api/subtasks/{sub1.json()['id']}/status", json={"status": "已完成"})
+    # owner（有权限）直接变更子任务状态
+    done1 = owner.patch(f"/api/subtasks/{sub1.json()['id']}/status", json={"status": "已完成"})
     assert done1.status_code == 200, done1.json()
+    assert done1.json().get("status") == "已完成"
     still_running = owner.get(f"/api/tasks/{task_id}")
     assert still_running.json()["status"] == "进行中"
 
-    done2 = member.patch(f"/api/subtasks/{sub2.json()['id']}/status", json={"status": "已完成"})
+    done2 = owner.patch(f"/api/subtasks/{sub2.json()['id']}/status", json={"status": "已完成"})
     assert done2.status_code == 200, done2.json()
+    # 子任务全部完成后，关键任务仍保持"进行中"，不自动关闭
     still_waiting_owner = owner.get(f"/api/tasks/{task_id}")
     assert still_waiting_owner.json()["status"] == "进行中"
 
 
 def test_paused_subtasks_sync_parent_key_task_to_paused(case_data, client_pool):
+    """owner（有权限）直接暂缓子任务后，父级关键任务同步为暂缓。"""
     owner = client_pool(case_data.owner)
-    member = client_pool(case_data.member)
 
     task_resp = owner.post("/api/tasks", json=_task_payload(case_data, status="进行中"))
     assert task_resp.status_code == 200, task_resp.json()
     task_id = task_resp.json()["id"]
 
-    sub = member.post(
+    # F: owner 创建子任务
+    sub = owner.post(
         f"/api/tasks/{task_id}/subtasks",
         json={"title": "暂停动作", "assignee": case_data.member, "plan_time": "2026-06", "status": "进行中"},
     )
     assert sub.status_code == 200, sub.json()
 
-    paused = member.patch(f"/api/subtasks/{sub.json()['id']}/status", json={"status": "暂缓"})
+    # owner 直接设为暂缓（有权限，直接生效）
+    paused = owner.patch(f"/api/subtasks/{sub.json()['id']}/status", json={"status": "暂缓"})
     assert paused.status_code == 200, paused.json()
+    assert paused.json().get("status") == "暂缓"
 
     parent = owner.get(f"/api/tasks/{task_id}")
     assert parent.status_code == 200, parent.json()
@@ -121,8 +143,8 @@ def test_paused_subtasks_sync_parent_key_task_to_paused(case_data, client_pool):
 
 
 def test_key_task_completion_requires_completed_subtasks(case_data, client_pool):
+    """关键任务关闭前必须完成全部子任务（owner 创建 + owner 直接完成子任务）。"""
     owner = client_pool(case_data.owner)
-    member = client_pool(case_data.member)
 
     task_resp = owner.post("/api/tasks", json=_task_payload(case_data))
     assert task_resp.status_code == 200, task_resp.json()
@@ -131,7 +153,8 @@ def test_key_task_completion_requires_completed_subtasks(case_data, client_pool)
     blocked_without_children = owner.patch(f"/api/tasks/{task_id}/status", json={"status": "已完成"})
     assert blocked_without_children.status_code == 409, blocked_without_children.json()
 
-    sub = member.post(
+    # F: owner 创建子任务
+    sub = owner.post(
         f"/api/tasks/{task_id}/subtasks",
         json={"title": "未完成动作", "assignee": case_data.member, "plan_time": "2026-06", "status": "进行中"},
     )
@@ -140,22 +163,65 @@ def test_key_task_completion_requires_completed_subtasks(case_data, client_pool)
     blocked_with_active_child = owner.patch(f"/api/tasks/{task_id}/status", json={"status": "已完成"})
     assert blocked_with_active_child.status_code == 409, blocked_with_active_child.json()
 
-    done = member.patch(f"/api/subtasks/{sub.json()['id']}/status", json={"status": "已完成"})
+    # owner 直接完成子任务（有权限，直接生效）
+    done = owner.patch(f"/api/subtasks/{sub.json()['id']}/status", json={"status": "已完成"})
     assert done.status_code == 200, done.json()
+    assert done.json().get("status") == "已完成"
 
+    # A/B: owner 可以关闭关键任务
     allowed = owner.patch(f"/api/tasks/{task_id}/status", json={"status": "已完成"})
     assert allowed.status_code == 200, allowed.json()
 
 
+def test_coordinator_can_edit_key_task_but_cannot_restore_recycle_bin_item(case_data, client_pool):
+    owner = client_pool(case_data.owner)
+    coordinator = client_pool(case_data.coordinator)
+
+    task_resp = owner.post("/api/tasks", json=_task_payload(case_data))
+    assert task_resp.status_code == 200, task_resp.json()
+    task = task_resp.json()
+    task_id = task["id"]
+
+    edit_payload = {
+        **_task_payload(case_data, status=TS.S_IN_PROGRESS),
+        "key_task": "统筹人可编辑的关键任务",
+        "key_achievement": task["key_achievement"],
+        "completion_standard": task["completion_standard"],
+        "coordinator": case_data.coordinator,
+        "owner": case_data.owner,
+        "collaborators": case_data.member,
+        "problem_note": "由统筹人补充进展说明",
+    }
+    edit_resp = coordinator.put(f"/api/tasks/{task_id}", json=edit_payload)
+    assert edit_resp.status_code == 200, edit_resp.json()
+    assert edit_resp.json()["key_task"] == "统筹人可编辑的关键任务"
+
+    status_resp = coordinator.patch(f"/api/tasks/{task_id}/status", json={"status": TS.S_PAUSED})
+    assert status_resp.status_code == 200, status_resp.json()
+    assert status_resp.json()["status"] == TS.S_PAUSED
+
+    coordinator_delete = coordinator.delete(f"/api/tasks/{task_id}")
+    assert coordinator_delete.status_code == 403, coordinator_delete.json()
+
+    delete_resp = owner.delete(f"/api/tasks/{task_id}")
+    assert delete_resp.status_code == 200, delete_resp.json()
+
+    restore_resp = coordinator.post(f"/api/tasks/{task_id}/restore")
+    assert restore_resp.status_code == 403, restore_resp.json()
+
+    owner_restore = owner.post(f"/api/tasks/{task_id}/restore")
+    assert owner_restore.status_code == 200, owner_restore.json()
+
+
 def test_deleting_key_task_moves_children_to_recycle_bin_and_restores_them(case_data, client_pool):
     owner = client_pool(case_data.owner)
-    member = client_pool(case_data.member)
 
     task_resp = owner.post("/api/tasks", json=_task_payload(case_data))
     assert task_resp.status_code == 200, task_resp.json()
     task_id = task_resp.json()["id"]
 
-    sub = member.post(
+    # F: owner 创建子任务
+    sub = owner.post(
         f"/api/tasks/{task_id}/subtasks",
         json={"title": "将随关键任务删除", "assignee": case_data.member, "plan_time": "2026-06", "status": "进行中"},
     )
@@ -211,13 +277,13 @@ def test_deleting_key_task_moves_children_to_recycle_bin_and_restores_them(case_
 
 def test_subtask_soft_delete_and_restore_shows_in_recycle_bin(case_data, client_pool):
     owner = client_pool(case_data.owner)
-    member = client_pool(case_data.member)
 
     task_resp = owner.post("/api/tasks", json=_task_payload(case_data))
     assert task_resp.status_code == 200, task_resp.json()
     task_id = task_resp.json()["id"]
 
-    sub = member.post(
+    # F: owner 创建子任务
+    sub = owner.post(
         f"/api/tasks/{task_id}/subtasks",
         json={"title": "独立回收的子任务", "assignee": case_data.member, "plan_time": "2026-06", "status": "进行中"},
     )

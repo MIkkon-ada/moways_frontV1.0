@@ -105,7 +105,11 @@ def _detach_person_from_projects(db: Session, person_name: str):
 @router.get("/me")
 def me(current_user: str = Depends(get_current_user_name), db: Session = Depends(get_db)):
     context = get_user_context_from_db(current_user, db)
+    account = db.query(models.Account).filter(models.Account.username == current_user).first()
     return {
+        "account_id": account.id if account else None,
+        "person_id": context.get("person_id"),
+        "username": current_user,
         "name": context["name"],
         "is_ceo": context["is_ceo"],
         "is_tech_admin": context["is_tech_admin"],
@@ -129,6 +133,7 @@ def me(current_user: str = Depends(get_current_user_name), db: Session = Depends
         "collaborated_projects": context["collaborated_projects"],
         "project_roles": context.get("project_roles", {}),
         "system_role": context["system_role"],
+        "must_change_password": bool(account.must_change_password) if account else False,
     }
 
 

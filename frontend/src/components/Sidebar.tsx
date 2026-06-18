@@ -6,7 +6,7 @@ type SidebarProps = {
   activePage: AppPage
   onNavigate: (page: AppPage) => void
   currentUser: CurrentUser | null
-  currentProjectRoles: string[]
+  globalUserRoles: string[]
   onLogout?: () => void
   logoUrl?: string | null
   platformName?: string
@@ -26,25 +26,34 @@ type SectionSeparator = {
 
 type NavEntry = NavItem | SectionSeparator
 
-export function Sidebar({ activePage, onNavigate, currentUser, currentProjectRoles, onLogout, logoUrl, platformName }: SidebarProps) {
+export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, onLogout, logoUrl, platformName }: SidebarProps) {
   const navigate = useNavigate()
   const userName = currentUser?.name ?? ''
   const roleLabel: Record<string, string> = { owner: '项目负责人', coordinator: '统筹人', member: '协同成员', process_guard: '过程保障', project_ceo: '专项CEO' }
-  const roleText = currentProjectRoles.length > 0
-    ? currentProjectRoles.map(r => roleLabel[r] ?? r).join(' / ')
-    : (currentUser?.system_role ?? '')
+  // 角色标签：按优先级取最高全局角色
+  const rolePriority = ['owner', 'coordinator', 'project_ceo', 'process_guard', 'member']
+  const highestRole = rolePriority.find(r => globalUserRoles.includes(r))
+  const roleText = highestRole ? (roleLabel[highestRole] ?? highestRole) : (currentUser?.system_role ?? '')
   const avatarChar = userName.slice(0, 1) || '博'
 
-  // CEO 判断：全局 CEO 或项目级 project_ceo 角色
-  const isCEO = !!(currentUser?.is_ceo || currentProjectRoles.includes('project_ceo'))
+  // CEO 判断：全局 CEO 或任意项目有 project_ceo 角色
+  const isCEO = !!(currentUser?.is_ceo || globalUserRoles.includes('project_ceo'))
+
+  // 有管理权限：超管 或 任意项目是负责人/统筹人/CEO
+  const isPrivileged = !!(
+    currentUser?.is_tech_admin ||
+    globalUserRoles.some(r => ['owner', 'coordinator', 'project_ceo'].includes(r))
+  )
 
   const navEntries: NavEntry[] = [
-    { page: 'dashboard', label: '首页驾驶舱', icon: <IconHome /> },
+    // 驾驶舱、AI确认中心、工作推进表只对有管理权限的人显示
+    ...(isPrivileged ? [{ page: 'dashboard' as const, label: '首页驾驶舱', icon: <IconHome /> }] : []),
+    { page: 'mytasks', label: '我的工作台', icon: <IconMyTasks /> },
     { page: 'voice', label: '语音更新', icon: <IconVoice /> },
     { page: 'meeting', label: '会议纪要', icon: <IconDoc /> },
-    { page: 'confirm', label: 'AI 确认中心', icon: <IconConfirm /> },
-    { page: 'table', label: '工作推进表', icon: <IconTable /> },
-    { kind: 'separator', label: '资源库' },
+    ...(isPrivileged ? [{ page: 'confirm' as const, label: 'AI 确认中心', icon: <IconConfirm /> }] : []),
+    ...(isPrivileged ? [{ page: 'table' as const, label: '工作推进表', icon: <IconTable /> }] : []),
+    { kind: 'separator' as const, label: '资源库' },
     { page: 'achievements', label: '成果库', icon: <IconArchive /> },
     { page: 'issues', label: '问题与决策', icon: <IconAlert /> },
     ...(isCEO ? [{ page: 'decisions' as const, label: 'CEO 决策中心', icon: <IconGavel /> }] : []),
@@ -148,6 +157,19 @@ export function Sidebar({ activePage, onNavigate, currentUser, currentProjectRol
           <div className="text-white text-sm font-semibold truncate">{userName || '未登录'}</div>
           <div className="text-slate-500 text-xs truncate">{roleText || '暂无角色'}</div>
         </div>
+        <button
+          type="button"
+          onClick={() => navigate('/change-password')}
+          title="修改密码"
+          className="flex-shrink-0 p-1.5 rounded-lg transition-colors hover:bg-white/10"
+          style={{ color: '#64748B' }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = '#94A3B8' }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = '#64748B' }}
+        >
+          <svg style={{ width: 16, height: 16 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+          </svg>
+        </button>
         {onLogout && (
           <button
             type="button"
@@ -204,6 +226,14 @@ function IconTable() {
   return (
     <svg style={{ width: 16, height: 16 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+    </svg>
+  )
+}
+
+function IconMyTasks() {
+  return (
+    <svg style={{ width: 16, height: 16 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
     </svg>
   )
 }

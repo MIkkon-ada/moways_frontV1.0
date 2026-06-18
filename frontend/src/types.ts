@@ -38,12 +38,15 @@ export type TaskStatItem = {
   tone: 'total' | 'notstart' | 'progress' | 'done' | 'delayed' | 'paused'
 }
 
-export type AppPage = 'dashboard' | 'voice' | 'meeting' | 'confirm' | 'table' | 'achievements' | 'issues' | 'coordinate' | 'decisions' | 'settings'
+export type AppPage = 'dashboard' | 'voice' | 'meeting' | 'confirm' | 'table' | 'achievements' | 'issues' | 'coordinate' | 'decisions' | 'settings' | 'mytasks'
 
 // ── 项目化地基类型（P0-1）──────────────────────────────────
 
 // GET /api/people/me 返回（仅声明本批会用到的字段，其余字段后端仍返回）
 export type CurrentUser = {
+  account_id?: number | null
+  person_id?: number | null
+  username?: string
   name: string
   system_role: string
   is_tech_admin: boolean
@@ -54,6 +57,7 @@ export type CurrentUser = {
   can_confirm_all: boolean
   visible_projects: string[]
   project_roles: Record<string, string>
+  must_change_password?: boolean
 }
 
 // GET /api/projects 列表项
@@ -157,6 +161,34 @@ export type AchievementItem = {
   scenario?: string
   reuse_tag?: string
   status?: string
+  confirmed_by?: string
+  confirmed_at?: string | null
+  source_submission_id?: number | null
+  source_achievement_submission_id?: number | null
+  created_at?: string
+  updated_at?: string
+  [key: string]: unknown
+}
+
+// GET /api/achievement-submissions
+export type AchievementSubmissionItem = {
+  id: number
+  project_id: number | null
+  special_project?: string
+  related_task_id?: number | null
+  related_subtask_id?: number | null
+  submitter?: string
+  name: string
+  achievement_type?: string
+  version?: string
+  file_link?: string
+  scenario?: string
+  reuse_tag?: string
+  status: string  // 待确认 / 已确认 / 已退回 / 已撤回
+  reviewer?: string
+  reviewed_at?: string | null
+  reject_reason?: string
+  source_type?: string
   created_at?: string
   updated_at?: string
   [key: string]: unknown
@@ -210,6 +242,7 @@ export type SubTaskItem = {
   status: string
   completion_criteria?: string
   notes?: string
+  source_submission_id?: number | null
   is_deleted?: boolean
   deleted_at?: string | null
   deleted_by?: string

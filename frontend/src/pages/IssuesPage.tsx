@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { fmtDate } from '../utils/time'
-import { fetchIssues, deleteIssue } from '../api/issues'
+import { fetchIssues, deleteIssue, resolveIssue, closeIssue, assignIssueHelper, requestIssueCeo } from '../api/issues'
 import { useProject } from '../context/ProjectContext'
 import type { IssueItem } from '../types'
 
@@ -13,30 +13,53 @@ const PRI_STYLE: Record<string, string> = {
 const STATUS_STYLE: Record<string, { badge: string; dot: string }> = {
   '待处理': { badge: 'bg-amber-100 text-amber-700', dot: '#F59E0B' },
   '处理中': { badge: 'bg-blue-100 text-blue-700', dot: '#3B82F6' },
+  '待决策': { badge: 'bg-purple-100 text-purple-700', dot: '#7C3AED' },
   '已解决': { badge: 'bg-emerald-100 text-emerald-700', dot: '#10B981' },
   '已关闭': { badge: 'bg-slate-100 text-slate-500', dot: '#94A3B8' },
   '已决策': { badge: 'bg-purple-100 text-purple-600', dot: '#7C3AED' },
 }
 
 const TYPE_STYLE: Record<string, string> = {
-  '技术问题': 'bg-blue-50 text-blue-700 border-blue-200',
-  '需求/产品': 'bg-purple-50 text-purple-700 border-purple-200',
-  '前瞻风险': 'bg-red-50 text-red-700 border-red-200',
-  '架构设计': 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  '数据问题': 'bg-orange-50 text-orange-700 border-orange-200',
+  '问题': 'bg-orange-50 text-orange-700 border-orange-200',
+  '风险': 'bg-red-50 text-red-700 border-red-200',
+  '待协调': 'bg-blue-50 text-blue-700 border-blue-200',
+  '需决策': 'bg-purple-50 text-purple-700 border-purple-200',
 }
 
 export function IssuesPage() {
-  const { currentProjectId, currentUser, currentProjectRoles } = useProject()
+  const { currentProjectId, currentUser, globalUserRoles } = useProject()
   const [issues, setIssues] = useState<IssueItem[]>([])
   const [selected, setSelected] = useState<IssueItem | null>(null)
   const [loading, setLoading] = useState(false)
   const [filterStatus, setFilterStatus] = useState('')
+  const [filterType, setFilterType] = useState('')
   const [filterPriority, setFilterPriority] = useState('')
   const [checked, setChecked] = useState<Set<number>>(new Set())
 
-  const canDelete = currentUser?.is_tech_admin || currentProjectRoles.includes('owner')
-  const isCEO = !!(currentUser?.is_ceo || currentProjectRoles.includes('project_ceo'))
+  const canDelete = currentUser?.is_tech_admin || globalUserRoles.includes('owner')
+  const isCEO = !!(currentUser?.is_ceo || globalUserRoles.includes('project_ceo'))
+  const canOwnerAction = canDelete
+
+  // right panel action state
+  const [actionLoading, setActionLoading] = useState(false)
+  const [actionErr, setActionErr] = useState('')
+  const [resolutionInput, setResolutionInput] = useState('')
+  const [helperInput, setHelperInput] = useState('')
+  const [ceoTarget, setCeoTarget] = useState('')
+  const [ceoNote, setCeoNote] = useState('')
+  const [showCeoForm, setShowCeoForm] = useState(false)
+  const [closeReason, setCloseReason] = useState('')
+
+  // reset processing area when selection changes
+  useEffect(() => {
+    setActionErr('')
+    setResolutionInput(selected?.resolution ?? '')
+    setHelperInput(selected?.helper ?? '')
+    setCeoTarget('')
+    setCeoNote('')
+    setShowCeoForm(false)
+    setCloseReason('')
+  }, [selected?.id])
 
   useEffect(() => {
     let cancelled = false
@@ -50,6 +73,7 @@ export function IssuesPage() {
 
   const filtered = issues.filter((i) => {
     if (filterStatus && i.status !== filterStatus) return false
+    if (filterType && i.issue_type !== filterType) return false
     if (filterPriority && i.priority !== filterPriority) return false
     return true
   })
@@ -74,6 +98,41 @@ export function IssuesPage() {
     fetchIssues().then((d) => setIssues(d)).catch(() => {})
   }
 
+  async function doAction(fn: () => Promise<IssueItem>) {
+    setActionLoading(true)
+    setActionErr('')
+    try {
+      const updated = await fn()
+      setIssues((prev) => prev.map((i) => i.id === updated.id ? updated : i))
+      setSelected(updated)
+      setShowCeoForm(false)
+    } catch (e: unknown) {
+      setActionErr(e instanceof Error ? e.message : '操作失败')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  function handleResolve() {
+    if (!selected) return
+    doAction(() => resolveIssue(selected.id, resolutionInput.trim()))
+  }
+
+  function handleClose() {
+    if (!selected) return
+    doAction(() => closeIssue(selected.id, closeReason.trim()))
+  }
+
+  function handleAssignHelper() {
+    if (!selected || !helperInput.trim()) return
+    doAction(() => assignIssueHelper(selected.id, helperInput.trim()))
+  }
+
+  function handleRequestCeo() {
+    if (!selected || !ceoTarget.trim()) return
+    doAction(() => requestIssueCeo(selected.id, ceoTarget.trim(), ceoNote.trim()))
+  }
+
   async function handleDelete(issue: IssueItem, e: React.MouseEvent) {
     e.stopPropagation()
     if (!confirm(`确认删除该问题？`)) return
@@ -95,7 +154,7 @@ export function IssuesPage() {
   const waiting = issues.filter((i) => i.status === '待处理').length
   const processing = issues.filter((i) => i.status === '处理中').length
   const resolved = issues.filter((i) => i.status === '已解决').length
-  const decisions = issues.filter((i) => i.need_decision_by).length
+  const decisions = issues.filter((i) => i.issue_type === '需决策' || i.status === '待决策').length
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -105,8 +164,11 @@ export function IssuesPage() {
           <p className="text-xs text-slate-400 mt-0.5">跟踪项目卡点、风险、待办事项与待决策事项</p>
         </div>
         <div className="flex items-center gap-2">
+          <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none">
+            <option value="">全部类型</option><option>问题</option><option>风险</option><option>待协调</option><option>需决策</option>
+          </select>
           <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none">
-            <option value="">全部状态</option><option>待处理</option><option>处理中</option><option>已解决</option><option>已关闭</option>
+            <option value="">全部状态</option><option>待处理</option><option>处理中</option><option>待决策</option><option>已解决</option><option>已关闭</option>
           </select>
           <select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)} className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none">
             <option value="">全部优先级</option><option>高</option><option>中</option><option>低</option>
@@ -126,7 +188,7 @@ export function IssuesPage() {
               { label: '待处理问题', val: waiting, color: '#D97706', bg: 'linear-gradient(135deg,#D97706,#FBBF24)' },
               { label: '处理中', val: processing, color: '#2563EB', bg: 'linear-gradient(135deg,#2563EB,#60A5FA)', accent: '#2563EB' },
               { label: '已解决', val: resolved, color: '#059669', bg: 'linear-gradient(135deg,#059669,#34D399)', accent: '#059669' },
-              { label: '需决策事项', val: decisions, color: '#7C3AED', bg: 'linear-gradient(135deg,#7C3AED,#A78BFA)', accent: '#7C3AED' },
+              { label: '待决策事项', val: decisions, color: '#7C3AED', bg: 'linear-gradient(135deg,#7C3AED,#A78BFA)', accent: '#7C3AED' },
             ].map(({ label, val, color, bg, accent }) => (
               <div key={label} className="bg-white rounded-2xl border p-4 flex items-center gap-4" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)', borderLeft: accent ? `3px solid ${accent}` : undefined }}>
                 <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 text-white" style={{ background: bg }}>
@@ -242,55 +304,183 @@ export function IssuesPage() {
         </div>
 
         {/* Right panel */}
-        {selected && (
-          <div style={{ width: 300, flexShrink: 0, background: '#fff', borderLeft: '1px solid #E9EFF6', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div className="px-4 pt-4 pb-3 border-b flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-bold text-slate-800">问题详情</h2>
-                <button onClick={() => setSelected(null)} className="p-1 rounded-lg hover:bg-slate-100 text-slate-400">
-                  <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                </button>
+        {selected && (() => {
+          const st = selected.status ?? ''
+          const tp = selected.issue_type ?? ''
+          const isTerminal = st === '已解决' || st === '已关闭'
+          const isClosed = st === '已关闭'
+          const isDecision = tp === '需决策'
+          const isCoordinate = tp === '待协调'
+          return (
+            <div style={{ width: 320, flexShrink: 0, background: '#fff', borderLeft: '1px solid #E9EFF6', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+              {/* ── Fixed header ── */}
+              <div className="px-4 pt-4 pb-3 border-b flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-sm font-bold text-slate-800">问题详情</h2>
+                  <button onClick={() => setSelected(null)} className="p-1 rounded-lg hover:bg-slate-100 text-slate-400">
+                    <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+                <p className="text-xs font-semibold text-slate-700 leading-snug">{selected.description ?? '-'}</p>
+                <div className="flex items-center gap-2 mt-2">
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${PRI_STYLE[selected.priority ?? ''] ?? 'bg-slate-100 text-slate-600'}`}>{selected.priority ?? '-'}</span>
+                  <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${STATUS_STYLE[st]?.badge ?? 'bg-slate-100 text-slate-600'}`}>
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: STATUS_STYLE[st]?.dot ?? '#94A3B8' }}></span>
+                    {st || '-'}
+                  </span>
+                </div>
               </div>
-              <p className="text-xs font-semibold text-slate-700 leading-snug">{selected.description ?? '-'}</p>
-              <div className="flex items-center gap-2 mt-2">
-                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${PRI_STYLE[selected.priority ?? ''] ?? 'bg-slate-100 text-slate-600'}`}>{selected.priority ?? '-'}</span>
-                <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${STATUS_STYLE[selected.status ?? '']?.badge ?? 'bg-slate-100 text-slate-600'}`}>
-                  {selected.status ?? '-'}
-                </span>
-              </div>
-            </div>
-            <div className="flex-1 overflow-y-auto px-4 py-4">
-              <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">问题追踪</h3>
-              <div className="space-y-3">
-                {[
-                  { label: '负责人', value: selected.owner },
-                  { label: '协助人', value: selected.helper },
-                  { label: '问题类型', value: selected.issue_type },
-                  { label: '需决策人', value: selected.need_decision_by },
-                  { label: '预计解决', value: selected.expected_resolve_time },
-                  { label: '创建时间', value: fmtDate(selected.created_at) },
-                ].filter((r) => r.value).map(({ label, value }) => (
-                  <div key={label} className="flex gap-2 text-xs py-1.5 border-b border-slate-50">
-                    <span className="w-16 flex-shrink-0 text-slate-500 font-semibold">{label}</span>
-                    <span className="text-slate-800">{value}</span>
+
+              {/* ── Scrollable tracking info ── */}
+              <div className="overflow-y-auto px-4 py-4" style={{ flex: '1 1 0', minHeight: 0 }}>
+                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">问题追踪</h3>
+                <div className="space-y-2">
+                  {([
+                    { label: '负责人', value: selected.owner },
+                    { label: '协助人', value: selected.helper },
+                    { label: '问题类型', value: tp },
+                    { label: '需决策人', value: selected.need_decision_by },
+                    { label: '预计解决', value: selected.expected_resolve_time },
+                    { label: '创建时间', value: fmtDate(selected.created_at) },
+                  ] as { label: string; value: string | undefined }[]).filter((r) => r.value).map(({ label, value }) => (
+                    <div key={label} className="flex gap-2 text-xs py-1.5 border-b border-slate-50">
+                      <span className="w-16 flex-shrink-0 text-slate-500 font-semibold">{label}</span>
+                      <span className="text-slate-800">{value}</span>
+                    </div>
+                  ))}
+                </div>
+                {/* Show saved result only for terminal states */}
+                {isTerminal && selected.resolution && (
+                  <div className="mt-4">
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                      {isDecision ? '决策结论' : '处理结论'}
+                    </p>
+                    <p className="text-xs text-slate-600 leading-relaxed p-3 rounded-xl" style={{ background: '#F0FDF4', border: '1px solid #BBF7D0' }}>{selected.resolution}</p>
                   </div>
-                ))}
+                )}
               </div>
-              {selected.resolution && (
-                <div className="mt-4">
-                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">处理结论</h3>
-                  <p className="text-xs text-slate-600 leading-relaxed p-3 rounded-xl" style={{ background: '#F0FDF4', border: '1px solid #BBF7D0' }}>{selected.resolution}</p>
+
+              {/* ── Fixed processing area (hidden when 已关闭) ── */}
+              {!isClosed && (
+                <div className="px-4 py-3 border-t flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
+                  {actionErr && <p className="text-xs text-red-500 mb-2">{actionErr}</p>}
+
+                  {/* ── Active: input forms ── */}
+                  {!isTerminal && (
+                    <>
+                      {/* 待协调: helper assignment */}
+                      {isCoordinate && (
+                        <div className="mb-3">
+                          <p className="text-xs font-semibold text-slate-500 mb-1">协助人</p>
+                          <div className="flex gap-1.5">
+                            <input
+                              value={helperInput}
+                              onChange={(e) => setHelperInput(e.target.value)}
+                              placeholder="输入协助人姓名"
+                              className="flex-1 text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-400"
+                            />
+                            {canOwnerAction && (
+                              <button
+                                onClick={handleAssignHelper}
+                                disabled={actionLoading || !helperInput.trim()}
+                                className="text-xs text-white font-semibold px-2.5 py-1.5 rounded-lg disabled:opacity-50"
+                                style={{ background: '#0369A1' }}
+                              >指定</button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Resolution / decision textarea */}
+                      <div className="mb-2">
+                        <p className="text-xs font-semibold text-slate-500 mb-1">
+                          {isDecision ? '决策结论' : '处理结论'}
+                        </p>
+                        <textarea
+                          value={resolutionInput}
+                          onChange={(e) => setResolutionInput(e.target.value)}
+                          rows={3}
+                          placeholder={isDecision
+                            ? '请输入最终决策结论，例如：第一版先做关键词搜索，标签筛选放第二版'
+                            : '请输入处理措施、结果或后续安排'}
+                          className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-400 resize-none leading-relaxed"
+                        />
+                      </div>
+
+                      {/* Primary action button */}
+                      {canOwnerAction && (
+                        <button
+                          onClick={handleResolve}
+                          disabled={actionLoading}
+                          className="w-full py-2 rounded-lg text-white text-xs font-bold hover:opacity-90 disabled:opacity-50 mb-2"
+                          style={{ background: isDecision ? 'linear-gradient(135deg,#7C3AED,#A78BFA)' : 'linear-gradient(135deg,#059669,#34D399)' }}
+                        >
+                          {isDecision ? '确认决策' : '标记已解决'}
+                        </button>
+                      )}
+
+                      {/* CEO escalation (not shown for decision issues — already is a decision) */}
+                      {canOwnerAction && !isDecision && (
+                        <div>
+                          <button
+                            onClick={() => setShowCeoForm(!showCeoForm)}
+                            className="text-xs font-medium cursor-pointer"
+                            style={{ color: showCeoForm ? '#94A3B8' : '#7C3AED' }}
+                          >
+                            {showCeoForm ? '▲ 收起' : '▼ 上报CEO决策'}
+                          </button>
+                          {showCeoForm && (
+                            <div className="mt-2 space-y-1.5">
+                              <input
+                                value={ceoTarget}
+                                onChange={(e) => setCeoTarget(e.target.value)}
+                                placeholder="决策人（如：CEO）"
+                                className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-purple-400"
+                              />
+                              <textarea
+                                value={ceoNote}
+                                onChange={(e) => setCeoNote(e.target.value)}
+                                rows={2}
+                                placeholder="上报说明（可选）"
+                                className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-purple-400 resize-none"
+                              />
+                              <button
+                                onClick={handleRequestCeo}
+                                disabled={actionLoading || !ceoTarget.trim()}
+                                className="w-full py-1.5 rounded-lg text-white text-xs font-bold hover:opacity-90 disabled:opacity-50"
+                                style={{ background: '#7C3AED' }}
+                              >确认上报</button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* ── Resolved: close section ── */}
+                  {st === '已解决' && canOwnerAction && (
+                    <>
+                      <p className="text-xs font-semibold text-slate-500 mb-1">关闭说明（可选）</p>
+                      <textarea
+                        value={closeReason}
+                        onChange={(e) => setCloseReason(e.target.value)}
+                        rows={2}
+                        placeholder="关闭原因或备注"
+                        className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none resize-none mb-2 leading-relaxed"
+                      />
+                      <button
+                        onClick={handleClose}
+                        disabled={actionLoading}
+                        className="w-full py-2 rounded-lg border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50"
+                      >关闭事项</button>
+                    </>
+                  )}
                 </div>
               )}
             </div>
-            <div className="px-4 py-3 border-t flex gap-2 flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
-              {isCEO && (
-                <button className="flex-1 py-2 rounded-lg text-white text-xs font-bold hover:opacity-90" style={{ background: 'linear-gradient(135deg,#7C3AED,#A78BFA)' }}>决策批复</button>
-              )}
-              <button className="flex-1 py-2 rounded-lg border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50">标记解决</button>
-            </div>
-          </div>
-        )}
+          )
+        })()}
       </div>
     </div>
   )

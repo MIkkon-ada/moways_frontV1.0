@@ -24,6 +24,8 @@ import { SettingsPage } from '../pages/SettingsPage'
 import { ProjectAdminPage } from '../pages/ProjectAdminPage'
 import { ProjectMembersPage } from '../pages/ProjectMembersPage'
 import { SetupPage } from '../pages/SetupPage'
+import { ChangePasswordPage } from '../pages/ChangePasswordPage'
+import { MyTasksPage } from '../pages/MyTasksPage'
 
 function HomeIndex() {
   const { currentUser } = useProject()
@@ -61,6 +63,14 @@ export function AppRoutes() {
       <Route path="/setup" element={<Navigate to="/login" replace />} />
       <Route path="/login" element={<LoginRoute />} />
       <Route
+        path="/change-password"
+        element={
+          <RequireAuth>
+            <ChangePasswordPage forced={false} />
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/home"
         element={
           <RequireAuth>
@@ -91,6 +101,7 @@ export function AppRoutes() {
       >
         <Route index element={<DashboardPage />} />
         <Route path="tasks" element={<TaskManagementPage />} />
+        <Route path="mytasks" element={<MyTasksPage />} />
         <Route path="achievements" element={<AchievementsPage />} />
         <Route path="issues" element={<IssuesPage />} />
         <Route path="confirm" element={<ConfirmPage />} />

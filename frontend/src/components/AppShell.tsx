@@ -10,10 +10,10 @@ type AppShellProps = {
 }
 
 export function AppShell({ children, activePage, onNavigate }: AppShellProps) {
-  const { currentUser, currentProjectRoles } = useProject()
+  const { currentUser, globalUserRoles } = useProject()
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
-      <Sidebar activePage={activePage} onNavigate={onNavigate} currentUser={currentUser} currentProjectRoles={currentProjectRoles} />
+      <Sidebar activePage={activePage} onNavigate={onNavigate} currentUser={currentUser} globalUserRoles={globalUserRoles} />
       <div style={{ flex: 1, overflow: 'hidden' }}>{children}</div>
     </div>
   )

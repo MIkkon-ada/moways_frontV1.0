@@ -596,6 +596,10 @@ def _global_overview(
     visible_proj_ids = _get_visible_project_ids(context, db)
 
     task_q = _apply_project_scope(db.query(models.Task), context, models.Task, visible_proj_ids).filter(models.Task.is_deleted == False)
+    # 只统计活跃（未归档）项目的任务
+    if not special_project_filter:
+        active_proj_names = db.query(models.Project.name).filter(models.Project.is_active == True)
+        task_q = task_q.filter(models.Task.special_project.in_(active_proj_names))
     if special_project_filter:
         task_q = task_q.filter(models.Task.special_project == special_project_filter)
     if owner_filter:

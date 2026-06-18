@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createUpdate, deleteUpdate, extractOnly, fetchUpdates, getUpdate } from '../api/updates'
-import type { UpdateDetail, UpdateHistoryItem } from '../api/updates'
+import { createUpdate, deleteUpdate, extractOnly, fetchUpdates, fetchVoiceContext, getUpdate } from '../api/updates'
+import { createDrafts } from '../api/subtaskDrafts'
+import type { ProposedSubTask } from '../api/subtaskDrafts'
+import type { KeyTaskIssue, TaskReport, UpdateDetail, UpdateHistoryItem, UserSubtaskContext } from '../api/updates'
 import { apiGet, apiUpload } from '../api/client'
+import { fetchSubTasks } from '../api/subtasks'
+import { fetchTasks } from '../api/tasks'
+import type { SubTaskItem, TaskItem } from '../types'
 import { useProject } from '../context/ProjectContext'
 import { fmtFull, fmtShort } from '../utils/time'
 import * as SS from '../domain/submissionStatus'
+import { buildVoiceUpdateHumanResult, formatIssueItems } from '../domain/voiceUpdateFlow'
 
 const DRAFT_KEY = 'bw_voice_draft'
 
@@ -40,6 +46,22 @@ export function VoiceUpdatePage() {
   const [draftSaved, setDraftSaved] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadFileName, setUploadFileName] = useState('')
+
+  const [proposedSubtasks, setProposedSubtasks] = useState<ProposedSubTask[]>([])
+  const [taskReports, setTaskReports] = useState<TaskReport[]>([])
+  const [keyTaskIssues, setKeyTaskIssues] = useState<KeyTaskIssue[]>([])
+  const [projectTasksForSuggest, setProjectTasksForSuggest] = useState<TaskItem[]>([])
+  const [voiceSubtasksContext, setVoiceSubtasksContext] = useState<UserSubtaskContext[]>([])
+  // Per-card attribution edit state (report index → card edit)
+  type CardEdit = { taskId: number | null; subtaskId: number | null; subtasks: SubTaskItem[]; editorOpen: boolean; modified: boolean }
+  const [cardEdits, setCardEdits] = useState<Record<number, CardEdit>>({})
+
+  function updateCardEdit(idx: number, patch: Partial<CardEdit>) {
+    setCardEdits(prev => {
+      const cur = prev[idx] ?? { taskId: null, subtaskId: null, subtasks: [], editorOpen: false, modified: false }
+      return { ...prev, [idx]: { ...cur, ...patch } }
+    })
+  }
 
   const [recording, setRecording] = useState(false)
   const [transcribing, setTranscribing] = useState(false)  // 转写中
@@ -135,17 +157,36 @@ export function VoiceUpdatePage() {
 
   useEffect(() => {
     if (currentProjectId && !selectedProjectId) setSelectedProjectId(currentProjectId)
-    if (currentProjectId) {
-      fetchUpdates(currentProjectId)
-        .then((rows) => setHistory(rows.slice(0, 20)))
-        .catch(() => {})
-    }
+    if (!currentProjectId) return
+    let cancelled = false
+    fetchUpdates(currentProjectId)
+      .then((rows) => { if (!cancelled) setHistory(rows.slice(0, 20)) })
+      .catch(() => { if (!cancelled) setError('历史记录加载失败，请刷新重试') })
+    return () => { cancelled = true }
   }, [currentProjectId])
+
+  useEffect(() => {
+    const pid = selectedProjectId ?? currentProjectId
+    if (!pid) return
+    fetchTasks(pid).then(setProjectTasksForSuggest).catch(() => setProjectTasksForSuggest([]))
+  }, [selectedProjectId, currentProjectId])
 
   function formatTime(s: number) {
     const m = Math.floor(s / 60)
     const sec = s % 60
     return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+  }
+
+  function resetExtractionState(options: { clearText?: boolean } = {}) {
+    setPhase('input')
+    if (options.clearText) setText('')
+    setResult(null)
+    setEditValues(null)
+    setEditingField(null)
+    setProposedSubtasks([])
+    setTaskReports([])
+    setKeyTaskIssues([])
+    setCardEdits({})
   }
 
   async function startRecording() {
@@ -223,22 +264,50 @@ export function VoiceUpdatePage() {
     submitLock.current = true
     const content = text.trim()
     if (!content) { submitLock.current = false; setError('请输入或录制内容'); return }
+    const projectId = selectedProjectId ?? currentProjectId
+    if (!projectId) { submitLock.current = false; setError('请先选择本次更新所属项目'); return }
     setPhase('extracting')
     setError(null)
     setResult(null)
+
+    // 拉取当前用户有权提交进展的子任务候选池（权限敏感：普通成员只看自己的任务）
+    let userSubtasks: UserSubtaskContext[] = []
+    try {
+      const contextSubs = await fetchVoiceContext(projectId)
+      // 原文中明确提到标题的子任务排在前面，优先进入LLM候选窗口
+      const mentioned = contextSubs.filter(s => content.includes(s.title))
+      const rest = contextSubs.filter(s => !content.includes(s.title))
+      userSubtasks = [...mentioned, ...rest].slice(0, 60)
+      setVoiceSubtasksContext(userSubtasks)
+    } catch { /* 获取失败不影响提取 */ }
+
     try {
       const res = await extractOnly({
+        project_id: projectId,
         source_type: mode === 'voice' ? '语音更新' : '文字更新',
         transcript_text: content,
         submitter: currentUser?.name,
         llm_provider: selectedProvider,
+        user_subtasks: userSubtasks,
       })
       const suggestion = res.suggestion ?? {}
       setResult(suggestion)
       setEditValues({ ...suggestion })
       setEditingField(null)
+      const rawProposed = (suggestion.proposed_subtasks as ProposedSubTask[] | undefined) ?? []
+      setProposedSubtasks(rawProposed.filter(s => s.title?.trim()))
+      const nextTaskReports = (suggestion.task_reports as TaskReport[] | undefined) ?? []
+      setTaskReports(nextTaskReports)
+      const initEdits: Record<number, CardEdit> = {}
+      nextTaskReports.forEach((r, idx) => {
+        if (r.type === 'progress' && r.matched_subtask_id) {
+          const sub = userSubtasks.find(s => s.id === r.matched_subtask_id)
+          initEdits[idx] = { taskId: sub?.parent_task_id ?? null, subtaskId: r.matched_subtask_id, subtasks: [], editorOpen: false, modified: false }
+        }
+      })
+      setCardEdits(initEdits)
+      setKeyTaskIssues((suggestion.key_task_issues as KeyTaskIssue[] | undefined) ?? [])
       setPhase('extracted')
-      // special_project 仅作预览展示，不反向驱动项目选择
     } catch (e: any) {
       setError(e?.message ?? 'AI提取失败，请重试')
       setPhase('input')
@@ -253,18 +322,103 @@ export function VoiceUpdatePage() {
     submitLock.current = true
     const projectId = selectedProjectId ?? currentProjectId
     if (!projectId || !currentUser) { submitLock.current = false; setError('请先选择关联专项'); return }
+
+    // 提交前校验：归属已修改但子任务层级未选完（仅 progress 类型需选到子任务）
+    const hasIncompleteOwnership = taskReports.some((r, i) => {
+      const e = cardEdits[i]
+      return r.type === 'progress' && e?.modified && e.taskId && !e.subtaskId
+    })
+    if (hasIncompleteOwnership) {
+      setError('归属不完整：已修改的任务卡请完整选择关键任务和子任务')
+      submitLock.current = false
+      return
+    }
+
+    // 提交前校验：所有 suggest_new_subtask 项必须已选择归属关键任务
+    const missingSuggest = taskReports.some((r, i) => {
+      if ((r as Record<string, unknown>).type !== 'suggest_new_subtask') return false
+      const hasParent = !!(r as Record<string, unknown>).parent_task_id
+      return !hasParent && !(cardEdits[i]?.modified && cardEdits[i].taskId)
+    })
+    if (missingSuggest) {
+      setError('请先为建议新增子任务选择归属关键任务')
+      submitLock.current = false
+      return
+    }
+
+    // 将提交人的归属选择注入 task_reports（每张卡独立）
+    const patchedTaskReports = taskReports.map((r, i) => {
+      const e = cardEdits[i]
+      if (!e?.modified) return r
+      if (r.type === 'progress') {
+        const selectedSub = e.subtaskId ? e.subtasks.find(s => s.id === e.subtaskId) : null
+        const selectedTask = e.taskId ? projectTasksForSuggest.find(t => t.id === e.taskId) : null
+        if (selectedSub) {
+          return {
+            ...r,
+            matched_subtask_id: selectedSub.id,
+            matched_subtask_title: selectedSub.title,
+            parent_task_id: selectedTask?.id ?? null,
+            parent_key_task: selectedTask?.key_task ?? '',
+          }
+        }
+        return r
+      }
+      if ((r as Record<string, unknown>).type === 'suggest_new_subtask') {
+        const selectedTask = e.taskId ? projectTasksForSuggest.find(t => t.id === e.taskId) : null
+        return {
+          ...r,
+          parent_task_id: selectedTask?.id ?? (r as Record<string, unknown>).parent_task_id ?? null,
+          parent_key_task: selectedTask?.key_task ?? (r as Record<string, unknown>).parent_key_task ?? '',
+        }
+      }
+      return r
+    })
+
+    const selectedProject = projects.find((p) => p.id === projectId)
     const content = text.trim()
     setPhase('submitting')
     setError(null)
     try {
-      await createUpdate({
+      // 把第一步已提取的 AI 结果随 human_result 一起发送，后端检测到 pipeline=llm_extract 时跳过重复 LLM 调用
+      const mergedHumanResult = buildVoiceUpdateHumanResult({
+        result,
+        editValues,
+        selectedProjectId: projectId,
+        selectedProjectName: selectedProject?.name ?? '',
+        taskReports: patchedTaskReports,
+        keyTaskIssues,
+      })
+      const { submission } = await createUpdate({
         project_id: projectId,
         source_type: mode === 'voice' ? '语音更新' : '文字更新',
         transcript_text: content,
         submitter: currentUser.name,
-        llm_provider: selectedProvider,
-        human_result: editValues ?? undefined,
+        human_result: mergedHumanResult,
       })
+      // 从 task_reports 里的 new_task 条目创建草稿子任务
+      const newTaskReports = taskReports.filter(r => r.type === 'new_task') as Extract<TaskReport, { type: 'new_task' }>[]
+      const draftItems = [
+        ...newTaskReports.map(r => ({
+          title: r.title,
+          assignee: r.assignee || currentUser.name,
+          plan_time: r.plan_start && r.plan_end ? `${r.plan_start}~${r.plan_end}` : r.plan_start || '',
+          parent_task_id: null as number | null,
+        })),
+        ...proposedSubtasks.map(s => ({
+          title: s.title,
+          assignee: s.assignee || currentUser.name,
+          plan_time: s.plan_time || '',
+          parent_task_id: null as number | null,
+        })),
+      ].filter(d => d.title.trim())
+      if (draftItems.length > 0) {
+        createDrafts({
+          project_id: projectId,
+          source_submission_id: submission?.id ?? null,
+          drafts: draftItems,
+        }).catch(() => {})
+      }
       setPhase('submitted')
       setSubmittedAt(new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-'))
       localStorage.removeItem(DRAFT_KEY)
@@ -289,11 +443,11 @@ export function VoiceUpdatePage() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto p-6" style={{ background: '#F1F5F9' }}>
-        <div className="grid grid-cols-5 gap-5 min-h-full">
+      <main className="flex-1 overflow-y-auto p-5" style={{ background: '#F1F5F9' }}>
+        <div className="grid gap-5 min-h-full" style={{ gridTemplateColumns: '360px minmax(0, 1fr)' }}>
 
           {/* Left: Input */}
-          <div className="col-span-2 flex flex-col gap-5">
+          <div className="flex flex-col gap-4">
             {/* Mode tabs */}
             <div className="bg-white rounded-2xl border p-1.5 flex gap-1" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
               {([
@@ -316,8 +470,29 @@ export function VoiceUpdatePage() {
               ))}
             </div>
 
+            {/* Model selector */}
+            <div className="bg-white rounded-2xl border p-4" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
+              <label className="block text-xs font-bold text-slate-500 mb-2">提取模型</label>
+              <select
+                value={selectedProvider}
+                onChange={(e) => setSelectedProvider(e.target.value)}
+                className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white text-slate-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30"
+                disabled={phase === 'extracting'}
+              >
+                {providers.map((p) => (
+                  <option key={p.provider} value={p.provider}>
+                    {p.display_name} ({p.model})
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {/* Input card */}
-            <div className="bg-white rounded-2xl border p-6 flex flex-col items-center" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
+            <div className="bg-white rounded-2xl border p-5 flex flex-col items-center" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
+              <div className="w-full flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold text-slate-700">本次更新内容</h3>
+                <span className="text-xs text-slate-400">提交前可编辑</span>
+              </div>
               {mode === 'voice' && (
                 <div className="w-full flex flex-col items-center">
                   {transcribing && (
@@ -378,7 +553,9 @@ export function VoiceUpdatePage() {
                     placeholder="请粘贴或输入本次进展内容，AI将自动提取关键信息…"
                     className="w-full border border-slate-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 resize-none"
                     style={{ height: 200 }}
+                    maxLength={5000}
                   />
+                  <div className="text-right text-xs text-slate-400 mt-1">{text.length}/5000</div>
                 </div>
               )}
 
@@ -413,20 +590,24 @@ export function VoiceUpdatePage() {
                     )}
                   </div>
                   {text && (
-                    <textarea
-                      value={text}
-                      onChange={(e) => setText(e.target.value)}
-                      placeholder="转写结果将显示在这里，可手动编辑…"
-                      className="w-full mt-3 border border-slate-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 resize-none"
-                      style={{ height: 120 }}
-                    />
+                    <>
+                      <textarea
+                        value={text}
+                        onChange={(e) => setText(e.target.value)}
+                        placeholder="转写结果将显示在这里，可手动编辑…"
+                        className="w-full mt-3 border border-slate-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 resize-none"
+                        style={{ height: 120 }}
+                        maxLength={5000}
+                      />
+                      <div className="text-right text-xs text-slate-400 mt-1">{text.length}/5000</div>
+                    </>
                   )}
                 </div>
               )}
             </div>
 
             {/* Guide questions */}
-            <div className="bg-white rounded-2xl border p-5" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
+            <div className="bg-white rounded-2xl border p-4" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
               <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">请围绕以下问题进行说明</h3>
               <div className="space-y-2.5">
                 {['本周完成了什么？', '形成了什么成果？', '当前有什么问题？', '下周做什么，需要协调谁？'].map((q, i) => (
@@ -440,7 +621,7 @@ export function VoiceUpdatePage() {
           </div>
 
           {/* Right: AI result */}
-          <div className="col-span-3 flex flex-col gap-4">
+          <div className="flex flex-col gap-4 min-w-0">
 
             {/* AI result card */}
             <div className="bg-white rounded-2xl border flex-1 flex flex-col overflow-hidden" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
@@ -556,61 +737,314 @@ export function VoiceUpdatePage() {
                   }
 
                   const COORD_CHIP_COLORS = ['#EFF6FF:#1D4ED8', '#F5F3FF:#5B21B6', '#F0FDF4:#065F46', '#FFF7ED:#92400E']
+                  const selectedProjectName = projects.find((p) => p.id === selectedProjectId)?.name || String(s.special_project ?? '未选择专项')
 
                   return (
                     <div>
-                      {/* AI 摘要 */}
-                      {s.summary ? (
-                        <div className="mb-4 p-3.5 rounded-xl" style={{ background: '#EFF6FF', border: '1px solid #BFDBFE' }}>
-                          <p className="text-sm text-slate-700 leading-relaxed">{s.summary as string}</p>
-                        </div>
-                      ) : null}
-
                       {/* Warning / status */}
                       {phase === 'submitted' ? (
                         <div className="flex items-center gap-2 p-3 rounded-lg mb-4" style={{ background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
                           <svg style={{ width: 13, height: 13, color: '#059669', flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                           <span className="text-xs text-emerald-700 font-medium">已提交给负责人，等待审核确认写入</span>
                         </div>
-                      ) : (
-                        <div className="flex items-center gap-2 p-3 rounded-lg mb-4" style={{ background: '#FFF7ED', border: '1px solid #FED7AA' }}>
-                          <svg style={{ width: 13, height: 13, color: '#D97706', flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                          <span className="text-xs text-amber-700 font-medium">AI已提取结果，请确认无误后点击"提交给负责人"</span>
+                      ) : null}
+
+                      {/* Task Reports – 进展确认卡片 */}
+                      {taskReports.length > 0 && (
+                        <div className="mb-4 space-y-3">
+                          {taskReports.length > 1 && (
+                            <div className="flex items-center gap-2">
+                              <div className="w-1 h-3.5 rounded-full" style={{ background: '#4338CA' }} />
+                              <span className="text-xs font-bold text-indigo-700">AI 任务解析</span>
+                              <span className="text-xs text-slate-400">· 共 {taskReports.length} 项</span>
+                            </div>
+                          )}
+                          {taskReports.map((r, i) => {
+                            const isSuggest = r.type === 'suggest_new_subtask'
+                            const isNew = !isSuggest && r.type === 'new_task'
+                            const matched = !isSuggest && !isNew && !!(r as Extract<TaskReport, {type:'progress'}>).matched_subtask_id
+                            const statusUpdate = (!isSuggest && !isNew) ? (r as Extract<TaskReport, {type:'progress'}>).status_update : null
+                            const STATUS_STYLE: Record<string, {bg:string;color:string}> = {
+                              '已完成': {bg:'#D1FAE5', color:'#065F46'},
+                              '延期':   {bg:'#FEE2E2', color:'#991B1B'},
+                              '进行中': {bg:'#DBEAFE', color:'#1E40AF'},
+                              '暂缓':   {bg:'#FEF3C7', color:'#92400E'},
+                            }
+                            const sStyle = statusUpdate ? (STATUS_STYLE[statusUpdate] ?? {bg:'#F1F5F9', color:'#475569'}) : null
+                            const title = isSuggest
+                              ? (r as Extract<TaskReport, {type:'suggest_new_subtask'}>).title
+                              : isNew
+                                ? (r as Extract<TaskReport, {type:'new_task'}>).title
+                                : (r as Extract<TaskReport, {type:'progress'}>).matched_subtask_title || '未匹配子任务'
+                            const completed = r.completed
+                            const achs = r.achievements ?? []
+                            const issues = formatIssueItems(r.subtask_issues ?? [])
+                            const nexts = r.next_steps ?? []
+                            const e = cardEdits[i] ?? { taskId: null, subtaskId: null, subtasks: [] as SubTaskItem[], editorOpen: false, modified: false }
+                            const aiParentKeyTask = r.type === 'progress'
+                              ? ((r as Extract<TaskReport, {type:'progress'}>).parent_key_task
+                                  || voiceSubtasksContext.find(s => s.id === (r as Extract<TaskReport, {type:'progress'}>).matched_subtask_id)?.parent_key_task
+                                  || '')
+                              : ((r as Record<string,unknown>).parent_key_task as string | undefined) || ''
+                            const dispKeyTask = (e.modified && e.taskId)
+                              ? (projectTasksForSuggest.find(t => t.id === e.taskId)?.key_task ?? '未关联关键任务')
+                              : aiParentKeyTask || '未关联关键任务'
+                            const aiSubtaskName = r.type === 'progress'
+                              ? ((r as Extract<TaskReport, {type:'progress'}>).matched_subtask_title || '')
+                              : ((r as Record<string,unknown>).title as string | undefined) || ''
+                            const dispSubtask = (e.modified && e.subtaskId)
+                              ? (e.subtasks.find(s => s.id === e.subtaskId)?.title ?? '未关联子任务')
+                              : aiSubtaskName || (isSuggest ? '待新增子任务' : '未关联子任务')
+                            const needsParent = isSuggest && !((r as Record<string,unknown>).parent_task_id) && !(e.modified && e.taskId)
+                            const borderColor = isSuggest ? (needsParent ? '#FCD34D' : '#86EFAC') : isNew ? '#DDD6FE' : matched ? '#BFDBFE' : '#E2E8F0'
+                            const headerBg = isSuggest ? '#FFFBEB' : isNew ? '#F5F3FF' : matched ? '#EFF6FF' : '#F8FAFC'
+                            return (
+                              <div key={i} className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${borderColor}` }}>
+                                {/* 卡片标题行：子任务名 + 状态 */}
+                                <div className="flex items-center gap-2 px-4 py-3" style={{ background: headerBg }}>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      {isSuggest && <span className="text-[10px] px-1.5 py-px rounded font-bold flex-shrink-0" style={{ background: '#FEF3C7', color: '#92400E' }}>建议新增</span>}
+                                      {isNew && <span className="text-[10px] px-1.5 py-px rounded font-bold flex-shrink-0" style={{ background: '#EDE9FE', color: '#5B21B6' }}>新任务</span>}
+                                      {!isSuggest && !isNew && matched && <span className="text-[10px] font-bold text-blue-400 flex-shrink-0">✓</span>}
+                                      {!isSuggest && !isNew && !matched && <span className="text-[10px] text-slate-400 flex-shrink-0">?</span>}
+                                      <span className="text-sm font-bold text-slate-800 leading-snug">{title}</span>
+                                    </div>
+                                    {isNew && (
+                                      <p className="text-xs text-violet-500 mt-0.5">{(r as Extract<TaskReport, {type:'new_task'}>).plan_start} ~ {(r as Extract<TaskReport, {type:'new_task'}>).plan_end}</p>
+                                    )}
+                                  </div>
+                                  {sStyle && statusUpdate && (
+                                    <span className="flex-shrink-0 text-xs px-2 py-1 rounded-full font-semibold" style={sStyle}>{statusUpdate}</span>
+                                  )}
+                                </div>
+                                {/* 归属面包屑 + 编辑器（每张卡独立） */}
+                                <div style={{ borderTop: `1px solid ${isSuggest ? '#FEF3C7' : '#E9EFF6'}` }}>
+                                  <div className="flex items-center gap-1.5 px-3 py-1.5 flex-wrap" style={{ background: isSuggest ? '#FFFBEB' : '#F8FBFF' }}>
+                                    <span className="text-[10px] font-semibold text-slate-400">归属</span>
+                                    <span className="text-[10px] text-slate-300">·</span>
+                                    <span className={`text-[10px] font-semibold ${dispKeyTask === '未关联关键任务' ? 'text-amber-500 italic' : 'text-slate-500'}`}>{dispKeyTask}</span>
+                                    {!isSuggest && (
+                                      <>
+                                        <span className="text-[10px] text-slate-300">›</span>
+                                        <span className={`text-[10px] font-semibold ${dispSubtask === '未关联子任务' ? 'text-amber-500 italic' : 'text-slate-500'}`}>{dispSubtask}</span>
+                                      </>
+                                    )}
+                                    {needsParent && !e.editorOpen && <span className="text-[10px] text-amber-600 font-bold ml-0.5">⚠️需选择</span>}
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        const newOpen = !e.editorOpen
+                                        updateCardEdit(i, { editorOpen: newOpen })
+                                        if (newOpen && e.taskId && e.subtasks.length === 0 && !isSuggest) {
+                                          const subs = await fetchSubTasks(e.taskId).catch(() => [] as SubTaskItem[])
+                                          updateCardEdit(i, { subtasks: (subs as SubTaskItem[]).filter(s => !s.is_deleted) })
+                                        }
+                                      }}
+                                      className="ml-auto text-[11px] font-semibold hover:opacity-70 flex-shrink-0"
+                                      style={{ color: e.editorOpen ? '#64748B' : '#2563EB' }}
+                                    >
+                                      {e.editorOpen ? '收起' : '修改归属'}
+                                    </button>
+                                  </div>
+                                  {needsParent && (
+                                    <div className="px-3 py-2" style={{ background: '#FFFBEB', borderTop: '1px solid #FEF3C7' }}>
+                                      <p className="text-[11px] font-semibold text-amber-700">负责人确认前必须选择归属关键任务</p>
+                                    </div>
+                                  )}
+                                  {e.editorOpen && (
+                                    <div className="px-3 pb-2.5 pt-1.5 space-y-1.5" style={{ background: '#EFF6FF', borderTop: '1px solid #BFDBFE' }}>
+                                      <select
+                                        value={e.taskId ?? ''}
+                                        onChange={async (ev) => {
+                                          const taskId = ev.target.value ? Number(ev.target.value) : null
+                                          updateCardEdit(i, { taskId, subtaskId: null, subtasks: [], modified: true })
+                                          if (taskId && !isSuggest) {
+                                            const subs = await fetchSubTasks(taskId).catch(() => [] as SubTaskItem[])
+                                            updateCardEdit(i, { taskId, subtasks: (subs as SubTaskItem[]).filter(s => !s.is_deleted), modified: true })
+                                          }
+                                        }}
+                                        className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white cursor-pointer focus:outline-none"
+                                      >
+                                        <option value="">选择关键任务</option>
+                                        {projectTasksForSuggest.map((t) => <option key={t.id} value={t.id}>{t.key_task}</option>)}
+                                      </select>
+                                      {!isSuggest && (
+                                        <select
+                                          value={e.subtaskId ?? ''}
+                                          disabled={!e.taskId}
+                                          onChange={(ev) => updateCardEdit(i, { subtaskId: ev.target.value ? Number(ev.target.value) : null, modified: true })}
+                                          className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white cursor-pointer focus:outline-none disabled:opacity-50"
+                                        >
+                                          <option value="">选择子任务</option>
+                                          {e.subtasks.map((sub) => <option key={sub.id} value={sub.id}>{sub.title}</option>)}
+                                        </select>
+                                      )}
+                                      {e.modified && !isSuggest && e.taskId && !e.subtaskId && (
+                                        <p className="text-[11px] text-amber-600 font-semibold">⚠️ 请继续选择子任务</p>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                                {/* 卡片正文 */}
+                                <div className="bg-white">
+                                  {isSuggest ? (
+                                    <>
+                                      {/* 建议内容 */}
+                                      <div className="px-4 py-3" style={{ borderTop: '1px solid #FEF3C7' }}>
+                                        <p className="text-[11px] font-semibold mb-1" style={{ color: '#92400E' }}>建议内容</p>
+                                        {completed
+                                          ? <p className="text-sm text-slate-700 leading-relaxed">{String(completed)}</p>
+                                          : <p className="text-xs text-slate-300 italic">未提及</p>
+                                        }
+                                      </div>
+                                      {/* 建议原因 */}
+                                      {issues.length > 0 && (
+                                        <div className="px-4 py-3" style={{ borderTop: '1px solid #FEF3C7', background: '#FFFBEB' }}>
+                                          <p className="text-[11px] font-semibold mb-1.5" style={{ color: '#92400E' }}>建议原因</p>
+                                          <ul className="space-y-1">
+                                            {issues.map((iss, ii) => (
+                                              <li key={ii} className="text-xs leading-relaxed flex items-start gap-1.5 text-amber-800">
+                                                <span className="flex-shrink-0 mt-0.5">·</span>
+                                                <span>{iss}</span>
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        </div>
+                                      )}
+                                      {/* 下一步 */}
+                                      <div className="px-4 py-3" style={{ borderTop: '1px solid #FEF3C7' }}>
+                                        <p className="text-[11px] font-semibold mb-1" style={{ color: '#92400E' }}>下一步</p>
+                                        {nexts.length > 0
+                                          ? <ul className="space-y-0.5">{nexts.map((n, ni) => (
+                                              <li key={ni} className="text-xs text-slate-700 leading-relaxed flex items-start gap-1.5">
+                                                <span className="flex-shrink-0 text-amber-300 mt-0.5">·</span>
+                                                <span>{String(n)}</span>
+                                              </li>
+                                            ))}</ul>
+                                          : <p className="text-xs text-slate-300 italic">未提及</p>
+                                        }
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <>
+                                      {/* 本次完成 */}
+                                      <div className="px-4 py-3" style={{ borderTop: '1px solid #F1F5F9' }}>
+                                        <p className="text-[11px] font-semibold text-slate-400 mb-1">本次完成</p>
+                                        {completed
+                                          ? <p className="text-sm text-slate-700 leading-relaxed">{String(completed)}</p>
+                                          : <p className="text-xs text-slate-300 italic">未提及</p>
+                                        }
+                                      </div>
+                                      {/* 成果文件（有时才显示） */}
+                                      {achs.length > 0 && (
+                                        <div className="px-4 py-3 space-y-2" style={{ borderTop: '1px solid #F1F5F9' }}>
+                                          <p className="text-[11px] font-semibold text-slate-400">成果文件</p>
+                                          {achs.map((ach, ai) => (
+                                            <div key={ai} className="flex items-center gap-2">
+                                              <span className="text-xs text-slate-600 flex-shrink-0 max-w-[120px] truncate" title={ach.name}>{ach.name}</span>
+                                              <input
+                                                type="text"
+                                                value={ach.file_link ?? ''}
+                                                onChange={(e) => {
+                                                  const val = e.target.value
+                                                  setTaskReports((prev) => prev.map((rep, ri) => {
+                                                    if (ri !== i) return rep
+                                                    const newAchs = (rep.achievements ?? []).map((a, xi) =>
+                                                      xi === ai ? { ...a, file_link: val } : a
+                                                    )
+                                                    return { ...rep, achievements: newAchs }
+                                                  }))
+                                                }}
+                                                placeholder="存储地址（飞书/腾讯文档链接，可选）"
+                                                className="flex-1 text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400/30"
+                                              />
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                      {/* 问题/风险（有时才显示，红色高亮） */}
+                                      {issues.length > 0 && (
+                                        <div className="px-4 py-3" style={{ borderTop: '1px solid #FEE2E2', background: '#FFF8F8' }}>
+                                          <p className="text-[11px] font-semibold mb-1.5" style={{ color: '#B91C1C' }}>问题 / 风险</p>
+                                          <ul className="space-y-1">
+                                            {issues.map((iss, ii) => (
+                                              <li key={ii} className="text-xs leading-relaxed flex items-start gap-1.5" style={{ color: '#DC2626' }}>
+                                                <span className="flex-shrink-0 mt-0.5">·</span>
+                                                <span>{iss}</span>
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        </div>
+                                      )}
+                                      {/* 下一步计划 */}
+                                      <div className="px-4 py-3" style={{ borderTop: '1px solid #F1F5F9' }}>
+                                        <p className="text-[11px] font-semibold text-slate-400 mb-1">下一步计划</p>
+                                        {nexts.length > 0
+                                          ? <ul className="space-y-0.5">{nexts.map((n, ni) => (
+                                              <li key={ni} className="text-xs text-slate-700 leading-relaxed flex items-start gap-1.5">
+                                                <span className="flex-shrink-0 text-slate-300 mt-0.5">·</span>
+                                                <span>{String(n)}</span>
+                                              </li>
+                                            ))}</ul>
+                                          : <p className="text-xs text-slate-300 italic">未提及</p>
+                                        }
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+
+                      {/* Key-task level issues */}
+                      {keyTaskIssues.length > 0 && (
+                        <div className="mb-4 rounded-2xl overflow-hidden" style={{ border: '1px solid #FED7AA' }}>
+                          <div className="flex items-center gap-2 px-4 py-2.5" style={{ background: '#FFF7ED' }}>
+                            <span className="text-xs">⚠️</span>
+                            <span className="text-xs font-bold text-amber-700">需处理事项</span>
+                            <span className="ml-auto text-xs text-amber-400">{keyTaskIssues.length} 条</span>
+                          </div>
+                          <div className="divide-y bg-white">
+                            {keyTaskIssues.map((issue, i) => {
+                              const PRIORITY_COLOR: Record<string, string> = { '高': '#DC2626', '中': '#D97706', '低': '#64748B' }
+                              const TYPE_BG: Record<string, {bg:string;color:string}> = {
+                                '需决策': {bg:'#EFF6FF', color:'#1D4ED8'},
+                                '决策': {bg:'#EFF6FF', color:'#1D4ED8'},
+                                '待协调': {bg:'#F5F3FF', color:'#5B21B6'},
+                                '风险': {bg:'#FEF2F2', color:'#DC2626'},
+                                '问题': {bg:'#FFF7ED', color:'#D97706'},
+                              }
+                              const ts = TYPE_BG[issue.issue_type] ?? {bg:'#F1F5F9', color:'#475569'}
+                              const pColor = PRIORITY_COLOR[issue.priority] ?? '#64748B'
+                              const meta = [
+                                issue.key_task_title,
+                                issue.need_coordination?.length > 0 ? `需协调：${issue.need_coordination.join('、')}` : '',
+                              ].filter(Boolean).join(' · ')
+                              return (
+                                <div key={i} className="px-4 py-2.5 flex items-start gap-2.5">
+                                  <span className="flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-semibold" style={ts}>{issue.issue_type}</span>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm text-slate-800 leading-snug">{issue.description}</p>
+                                    {meta && <p className="text-xs text-slate-400 mt-0.5">{meta}</p>}
+                                  </div>
+                                  {issue.priority && (
+                                    <span className="flex-shrink-0 text-xs font-semibold rounded px-1.5 py-0.5" style={{ background: `${pColor}18`, color: pColor }}>{issue.priority}</span>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
                         </div>
                       )}
 
                       {/* Field rows */}
                       <div className="space-y-0">
 
-                        {/* 专项 */}
-                        <div className="flex items-center py-3 border-b" style={{ borderColor: '#F1F5F9' }}>
-                          <span className="w-16 flex-shrink-0 text-xs font-semibold text-slate-400">专项</span>
-                          {isEditing('special_project') ? (
-                            <select autoFocus className="flex-1 text-sm border border-blue-300 rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400/30"
-                              value={s.special_project as string ?? ''}
-                              onChange={(e) => setField('special_project', e.target.value)}
-                              onBlur={() => setEditingField(null)}>
-                              {projects.map((p) => <option key={p.id}>{p.name}</option>)}
-                            </select>
-                          ) : (
-                            <span className="flex-1 text-sm font-semibold" style={{ color: '#0369A1' }}>{s.special_project as string}</span>
-                          )}
-                          <EditIcon field="special_project" />
-                        </div>
-
-                        {/* 关键任务 */}
-                        <div className="flex items-center py-3 border-b" style={{ borderColor: '#F1F5F9' }}>
-                          <span className="w-16 flex-shrink-0 text-xs font-semibold text-slate-400">任务</span>
-                          {isEditing('related_task') ? (
-                            <input autoFocus type="text" className="flex-1 text-sm border border-blue-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400/30"
-                              value={s.related_task as string ?? ''}
-                              onChange={(e) => setField('related_task', e.target.value)}
-                              onBlur={() => setEditingField(null)} />
-                          ) : (
-                            <span className="flex-1 text-sm text-slate-700">{s.related_task as string || '—'}</span>
-                          )}
-                          <EditIcon field="related_task" />
-                        </div>
+                        {/* 平铺字段：仅在无 task_reports（规则引擎降级）时显示 */}
+                        {taskReports.length === 0 && <>
 
                         {/* 完成事项 */}
                         <div className="flex items-start py-3 border-b" style={{ borderColor: '#F1F5F9' }}>
@@ -640,6 +1074,35 @@ export function VoiceUpdatePage() {
                           <EditIcon field="achievements" />
                         </div>
 
+                        {/* 成果链接（有成果时展示） */}
+                        {arrNames(s.achievements).length > 0 && (
+                          <div className="flex items-start py-3 border-b" style={{ borderColor: '#F1F5F9' }}>
+                            <span className="w-16 flex-shrink-0 text-xs font-semibold text-slate-400 pt-0.5">成果链接</span>
+                            <div className="flex-1 space-y-1.5">
+                              {(s.achievements as Record<string, unknown>[]).map((ach, i) => {
+                                const achName = String(ach.name || `成果${i + 1}`)
+                                return (
+                                  <div key={i} className="space-y-1">
+                                    <span className="text-xs font-medium text-slate-600">{achName}</span>
+                                    <input
+                                      type="url"
+                                      value={String(ach.file_link || '')}
+                                      onChange={(e) => {
+                                        const updated = [...(s.achievements as Record<string, unknown>[])]
+                                        updated[i] = { ...updated[i], file_link: e.target.value }
+                                        setField('achievements', updated)
+                                      }}
+                                      placeholder="粘贴文件链接（飞书、腾讯文档等，可选）"
+                                      className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400/30"
+                                    />
+                                  </div>
+                                )
+                              })}
+                              <p className="text-xs text-slate-400">有链接负责人入库时可直接关联，无则留空</p>
+                            </div>
+                          </div>
+                        )}
+
                         {/* 问题 */}
                         <div className="flex items-start py-3 border-b" style={{ borderColor: '#F1F5F9' }}>
                           <span className="w-16 flex-shrink-0 text-xs font-semibold text-slate-400 pt-0.5">问题</span>
@@ -667,6 +1130,54 @@ export function VoiceUpdatePage() {
                           )}
                           <EditIcon field="next_steps" />
                         </div>
+
+                        {/* 草稿子任务 */}
+                        {proposedSubtasks.length > 0 && (
+                          <div className="py-3 border-b" style={{ borderColor: '#F1F5F9' }}>
+                            <div className="flex items-center gap-2 mb-2">
+                              <div className="w-1 h-3.5 rounded-full" style={{ background: '#6366F1' }} />
+                              <span className="text-xs font-semibold text-indigo-600">下周草稿子任务</span>
+                              <span className="text-xs text-slate-400">提交后发给负责人审批，通过后自动创建</span>
+                            </div>
+                            <div className="space-y-2">
+                              {proposedSubtasks.map((ps, i) => (
+                                <div key={i} className="flex items-center gap-2 p-2.5 rounded-xl" style={{ background: '#F5F3FF', border: '1px solid #DDD6FE' }}>
+                                  <div className="flex-1 min-w-0 space-y-1">
+                                    <input
+                                      className="w-full text-xs border border-indigo-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-300 bg-white"
+                                      value={ps.title}
+                                      onChange={e => setProposedSubtasks(prev => prev.map((x, j) => j === i ? { ...x, title: e.target.value } : x))}
+                                      placeholder="任务说明"
+                                    />
+                                    <div className="flex gap-1.5">
+                                      <input
+                                        className="flex-1 text-xs border border-indigo-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-300 bg-white"
+                                        value={ps.assignee}
+                                        onChange={e => setProposedSubtasks(prev => prev.map((x, j) => j === i ? { ...x, assignee: e.target.value } : x))}
+                                        placeholder="执行人"
+                                      />
+                                      <input
+                                        className="flex-1 text-xs border border-indigo-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-300 bg-white"
+                                        value={ps.plan_time}
+                                        onChange={e => setProposedSubtasks(prev => prev.map((x, j) => j === i ? { ...x, plan_time: e.target.value } : x))}
+                                        placeholder="计划时间（可选）"
+                                      />
+                                    </div>
+                                  </div>
+                                  <button onClick={() => setProposedSubtasks(prev => prev.filter((_, j) => j !== i))} className="flex-shrink-0 p-1 rounded hover:bg-red-100 text-slate-300 hover:text-red-400">
+                                    <svg style={{ width: 13, height: 13 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                                  </button>
+                                </div>
+                              ))}
+                              <button
+                                onClick={() => setProposedSubtasks(prev => [...prev, { title: '', assignee: currentUser?.name ?? '', plan_time: '' }])}
+                                className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold"
+                              >
+                                + 手动添加
+                              </button>
+                            </div>
+                          </div>
+                        )}
 
                         {/* 需协调 */}
                         <div className="flex items-start py-3 border-b" style={{ borderColor: '#F1F5F9' }}>
@@ -727,6 +1238,8 @@ export function VoiceUpdatePage() {
                             </div>
                           </div>
                         )}
+
+                        </>}
                       </div>
                     </div>
                   )
@@ -758,7 +1271,7 @@ export function VoiceUpdatePage() {
                     </div>
                   </div>
                   <button
-                    onClick={() => { setPhase('input'); setText(''); setResult(null); setEditValues(null); setEditingField(null) }}
+                    onClick={() => resetExtractionState({ clearText: true })}
                     className="cursor-pointer w-full py-2.5 rounded-xl border-2 text-sm font-semibold transition-all hover:bg-slate-50"
                     style={{ borderColor: '#E2E8F0', color: '#475569' }}
                   >
@@ -767,44 +1280,10 @@ export function VoiceUpdatePage() {
                 </div>
               ) : (
                 <>
-                  <div className="grid grid-cols-2 gap-4 mb-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-500 mb-1.5">关联专项</label>
-                      <select
-                        value={selectedProjectId ?? ''}
-                        onChange={(e) => setSelectedProjectId(Number(e.target.value))}
-                        className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 cursor-pointer focus:outline-none"
-                        disabled={phase === 'extracting' || phase === 'submitting'}
-                      >
-                        {projects.map((p) => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-500 mb-1.5">提交人</label>
-                      <input type="text" defaultValue={currentUser?.name ?? ''} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none bg-slate-50 text-slate-500" readOnly />
-                    </div>
+                  <div className="mb-4 flex items-center gap-2">
+                    <span className="text-xs font-semibold text-slate-400">提交人</span>
+                    <span className="text-sm font-semibold text-slate-700">{currentUser?.name ?? '—'}</span>
                   </div>
-
-                  {/* AI引擎选择（仅步骤1显示）*/}
-                  {(phase === 'input' || phase === 'extracting') && (
-                    <div className="mb-4">
-                      <label className="block text-xs font-semibold text-slate-500 mb-1.5">AI 引擎</label>
-                      <select
-                        value={selectedProvider}
-                        onChange={(e) => setSelectedProvider(e.target.value)}
-                        className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 cursor-pointer focus:outline-none"
-                        disabled={phase === 'extracting'}
-                      >
-                        {providers.map((p) => (
-                          <option key={p.provider} value={p.provider}>
-                            {p.display_name} ({p.model})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
 
                   {/* 步骤1按钮：保存草稿 + AI提取 */}
                   {(phase === 'input' || phase === 'extracting') && (
@@ -838,21 +1317,34 @@ export function VoiceUpdatePage() {
                       <p className="text-xs text-slate-400">确认AI提取结果无误后，提交给项目负责人审核</p>
                       <div className="flex items-center gap-3">
                         <button
-                          onClick={() => { setPhase('input'); setResult(null); setEditValues(null); setEditingField(null) }}
+                          onClick={() => resetExtractionState()}
                           disabled={phase === 'submitting'}
                           className="cursor-pointer flex-1 py-2.5 rounded-xl border-2 text-sm font-semibold transition-all hover:bg-slate-50 disabled:opacity-50"
                           style={{ borderColor: '#E2E8F0', color: '#475569' }}
                         >
                           重新提取
                         </button>
-                        <button
-                          onClick={handleSubmitFinal}
-                          disabled={phase === 'submitting'}
-                          className="cursor-pointer flex-[2] py-2.5 rounded-xl text-white text-sm font-bold transition-all hover:opacity-90 disabled:opacity-50"
-                          style={{ background: 'linear-gradient(135deg,#059669,#0EA5E9)', boxShadow: '0 2px 8px rgba(5,150,105,0.3)' }}
-                        >
-                          {phase === 'submitting' ? '提交中…' : '提交给负责人'}
-                        </button>
+                        {(() => {
+                          const hasMissingSuggest = taskReports.some((r, i) => {
+                            if ((r as Record<string, unknown>).type !== 'suggest_new_subtask') return false
+                            const hasParent = !!(r as Record<string, unknown>).parent_task_id
+                            return !hasParent && !(cardEdits[i]?.modified && cardEdits[i].taskId)
+                          })
+                          return (
+                            <button
+                              onClick={handleSubmitFinal}
+                              disabled={phase === 'submitting' || hasMissingSuggest}
+                              title={hasMissingSuggest ? '请先为所有建议新增子任务选择归属关键任务' : undefined}
+                              className="cursor-pointer flex-[2] py-2.5 rounded-xl text-white text-sm font-bold transition-all hover:opacity-90 disabled:opacity-50"
+                              style={{
+                                background: hasMissingSuggest ? '#94A3B8' : 'linear-gradient(135deg,#059669,#0EA5E9)',
+                                boxShadow: hasMissingSuggest ? 'none' : '0 2px 8px rgba(5,150,105,0.3)',
+                              }}
+                            >
+                              {phase === 'submitting' ? '提交中…' : hasMissingSuggest ? '请先选择归属关键任务' : '提交给负责人'}
+                            </button>
+                          )
+                        })()}
                       </div>
                     </div>
                   )}
@@ -1046,6 +1538,21 @@ export function VoiceUpdatePage() {
           50% { height: 24px; }
         }
       `}</style>
+    </div>
+  )
+}
+
+function FieldRow({ label, icon, value, empty, highlight }: {
+  label: string; icon: string; value: string | null; empty: string; highlight?: boolean
+}) {
+  return (
+    <div className="flex items-start gap-3 px-4 py-2.5">
+      <span className="w-14 flex-shrink-0 text-xs font-semibold text-slate-400 pt-0.5 flex items-center gap-1">
+        <span>{icon}</span><span>{label}</span>
+      </span>
+      <span className="flex-1 text-xs leading-relaxed" style={{ color: value ? (highlight ? '#DC2626' : '#334155') : '#CBD5E1' }}>
+        {value ?? empty}
+      </span>
     </div>
   )
 }

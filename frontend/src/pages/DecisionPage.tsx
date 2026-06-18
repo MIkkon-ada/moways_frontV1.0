@@ -5,14 +5,14 @@ import { useProject } from '../context/ProjectContext'
 import type { ConfirmationItem } from '../types'
 
 export function DecisionPage() {
-  const { currentProjectId, currentUser, currentProjectRoles } = useProject()
+  const { currentProjectId, currentUser, globalUserRoles } = useProject()
   const [items, setItems] = useState<ConfirmationItem[]>([])
   const [selected, setSelected] = useState<ConfirmationItem | null>(null)
   const [loading, setLoading] = useState(false)
   const [note, setNote] = useState('')
   const [acting, setActing] = useState(false)
 
-  const isCEO = !!(currentUser?.is_ceo || currentProjectRoles.includes('project_ceo'))
+  const isCEO = !!(currentUser?.is_ceo || globalUserRoles.includes('project_ceo'))
 
   useEffect(() => {
     let cancelled = false

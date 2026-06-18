@@ -44,23 +44,35 @@ ACHIEVEMENT_TYPES = [
     "产品材料",
 ]
 REUSE_TAGS = ["内部使用", "项目复用", "产品材料", "客户交付"]
-ISSUE_TYPES = ["问题", "风险", "决策", "待协调"]
+ISSUE_TYPES = ["问题", "风险", "待协调", "需决策"]
 STATUS_VALUES = ["未开始", "进行中", "已完成", "延期", "暂缓"]
 
-_EXTRACT_PROMPT = """你是博维AI升级项目的结构化提取助手。请从下面的进度文本或会议纪要中提取结构化信息，只输出 JSON，不要输出解释。
+_EXTRACT_PROMPT_TMPL = """你是博维AI升级项目的结构化提取助手。今天是 {today}。请从进度汇报文本中提取结构化信息，只输出 JSON，不要输出解释。
+
+{subtasks_section}
+
 文本：
 ```
 {text}
 ```
 
 要求：
-1. `special_project` 如实提取文本中明确提到的专项名称；若文本中没有明确说明则留空，不要猜测或发明项目名
-2. `related_task` 是对**本周主要工作内容**的简短概括（10-25字），描述本周在做什么，不要写下周计划
-3. `completed_items` 是本周已完成的具体事项列表，与 `related_task` 互补：related_task 是概述，completed_items 是明细
-4. `achievements` 只记录真实产出的成果，如方案、模板、报告、SOP、Prompt、Agent原型、会议纪要、案例包、产品材料
-5. `issues` 只记录明确的问题、风险、待协调事项、待决策事项
-6. 没提到的信息填空字符串或空数组，不要编造
-7. `summary` 用一句话概括本次进展的核心内容（不超过60字），不要直接抄原文
+1. `special_project`：如实提取文本中明确提到的专项名称；若没有明确说明则留空，不要猜测
+2. `related_task`：对**本次主要工作内容**的简短概括（10-25字），不要写下周计划
+3. `completed_items`：本次已完成的具体事项列表
+4. `achievements`：只记录已明确产出的可交付实体成果（方案文档/模板/SOP/Prompt/Agent原型/会议纪要/复盘报告/案例包/产品材料）；过程性描述不是成果
+5. `issues`：将文本中所有需要处理的事项**逐条独立列出**，一段话里有多个事项就拆成多条，每条用一句话说清楚是什么需处理，**不要对事项分类（不填 issue_type）**，分类由负责人在确认环节定性，不要合并、不要遗漏
+6. `next_steps`：下周/后续计划列表
+7. `task_reports`：将文本**按子任务维度**解析，每条回答四个问题：①完成了什么 ②形成了什么成果 ③当前有什么问题 ④下周做什么
+   - type "progress"：汇报某个已有子任务的进展；matched_subtask_id 尝试匹配用户现有子任务ID，匹配不到则 null
+   - type "new_task"：用户明确提出要新增一项任务（含"添加""新增""帮我建"等意图词）
+   - achievements 只填已产出的可交付实体成果（文档/模板/SOP/Prompt等），过程性描述不是成果
+   - subtask_issues 只填与这个子任务执行直接相关的问题；不确定属于哪个子任务的问题，放 key_task_issues
+   - 时间转换（今天={today}）："约两周"=+14天，"一个月"=+30天，"下个月"=下月1日~末日，"本月底"=本月最后一日，未提及则 plan_end=plan_start+14天
+   - plan_start/plan_end 必须是精确日期 YYYY-MM-DD
+8. `key_task_issues`：不属于某个具体子任务、但影响整体关键任务交付的需处理事项；特定子任务的执行阻塞 → 放 subtask_issues；**不要填 issue_type**，由负责人定性
+9. 没提到的信息填空字符串或空数组，不要编造
+10. `summary`：一句话概括（不超过60字）
 
 输出格式：
 {{
@@ -83,23 +95,66 @@ _EXTRACT_PROMPT = """你是博维AI升级项目的结构化提取助手。请从
   ],
   "issues": [
     {{
-      "issue_type": "问题/风险/决策/待协调",
-      "description": "",
-      "owner": "",
-      "helper": "",
-      "priority": "高/中/低",
-      "status": "待处理",
-      "need_decision_by": "",
-      "expected_resolve_time": "",
-      "resolution": "",
-      "special_project": ""
+      "description": "一句话说清楚是什么问题",
+      "priority": "高/中/低"
     }}
   ],
   "next_steps": [""],
-  "status_suggestion": "未开始/进行中/已完成/延期/暂缓",
-  "need_coordination": [""]
+  "task_reports": [
+    {{
+      "type": "progress",
+      "matched_subtask_id": null,
+      "matched_subtask_title": "",
+      "completed": "本周在这个子任务上完成了什么（未提及则空）",
+      "achievements": [{{"name": "已产出的实体成果名称", "achievement_type": "方案/模板/SOP/Prompt/Agent原型/会议纪要/复盘报告/案例包/产品材料"}}],
+      "subtask_issues": ["和这个子任务直接相关的具体问题或风险（不确定属于哪个子任务则不填）"],
+      "next_steps": ["下周在这个子任务上计划做什么"],
+      "status_update": "进行中/已完成/延期"
+    }},
+    {{
+      "type": "new_task",
+      "title": "新任务名称（10-30字）",
+      "assignee": "执行人，未提及则填提交人",
+      "plan_start": "YYYY-MM-DD",
+      "plan_end": "YYYY-MM-DD",
+      "completed": null,
+      "achievements": [],
+      "subtask_issues": [],
+      "next_steps": ["新任务的具体计划内容"]
+    }}
+  ],
+  "key_task_issues": [
+    {{
+      "key_task_title": "归属的关键任务名称（从用户子任务推断，不确定则填专项名）",
+      "description": "需处理事项描述（一句话，不要带问题/风险前缀）",
+      "need_coordination": ["可能需要协调的人名，不确定可不填"],
+      "priority": "高/中/低"
+    }}
+  ],
+  "status_suggestion": "未开始/进行中/已完成/延期/暂缓"
 }}
 """
+
+
+def _build_subtasks_section(user_subtasks: list[dict] | None) -> str:
+    if not user_subtasks:
+        return "（用户暂无活跃子任务，文本中提及的新工作均提取为 new_task 类型）"
+    lines = ["用户当前活跃子任务（请将进展描述尽量匹配到对应子任务）："]
+    for st in user_subtasks[:20]:
+        line = f"- [ID:{st.get('id')}] {st.get('title', '')}（{st.get('status', '')}）"
+        if st.get("parent_key_task"):
+            line += f" — 关键任务：{st['parent_key_task']}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _build_extract_prompt(text: str, user_subtasks: list[dict] | None) -> str:
+    today = str(date.today())
+    return _EXTRACT_PROMPT_TMPL.format(
+        today=today,
+        subtasks_section=_build_subtasks_section(user_subtasks),
+        text=text,
+    )
 
 
 def _get_cfg(provider: str) -> dict:
@@ -124,41 +179,45 @@ def _extract_json_blob(raw: str) -> dict:
     return json.loads(match.group())
 
 
-def _call_anthropic(text: str) -> dict:
+def _call_anthropic(text: str, user_subtasks: list[dict] | None = None) -> dict:
     import anthropic
 
     cfg = _get_cfg("anthropic")
     if not cfg.get("api_key"):
         raise ValueError("Claude API Key not configured")
     client = anthropic.Anthropic(api_key=cfg["api_key"], timeout=_LLM_TIMEOUT)
-    prompt = _EXTRACT_PROMPT.format(text=text)
+    prompt = _build_extract_prompt(text, user_subtasks)
     resp = client.messages.create(
         model=cfg["model"],
-        max_tokens=2048,
+        max_tokens=3000,
         messages=[{"role": "user", "content": prompt}],
     )
     return _extract_json_blob(resp.content[0].text)
 
 
-def _call_openai_compat(text: str, provider: str) -> dict:
+def _call_openai_compat(text: str, provider: str, user_subtasks: list[dict] | None = None) -> dict:
     from openai import OpenAI
 
     cfg = _get_cfg(provider)
     if not cfg.get("api_key"):
         raise ValueError(f"{provider} API Key not configured")
     client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"], timeout=_LLM_TIMEOUT)
-    prompt = _EXTRACT_PROMPT.format(text=text)
+    prompt = _build_extract_prompt(text, user_subtasks)
     resp = client.chat.completions.create(
         model=cfg["model"],
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=2048,
+        max_tokens=3000,
     )
     return _extract_json_blob(resp.choices[0].message.content or "")
 
 
-def _extract_with_llm(text: str, provider: str) -> dict | None:
+def _extract_with_llm(text: str, provider: str, user_subtasks: list[dict] | None = None) -> dict | None:
     try:
-        data = _call_anthropic(text) if provider == "anthropic" else _call_openai_compat(text, provider)
+        data = (
+            _call_anthropic(text, user_subtasks)
+            if provider == "anthropic"
+            else _call_openai_compat(text, provider, user_subtasks)
+        )
         logger.info("LLM extract success provider=%s project=%s", provider, data.get("special_project"))
         return data
     except Exception as exc:
@@ -283,6 +342,23 @@ def _issue_type(line: str) -> str:
     return "问题"
 
 
+_SUBTASK_ISSUE_PREFIXES: list[tuple[tuple[str, ...], str]] = [
+    (("风险：", "风险:"), "风险"),
+    (("需决策：", "需决策:", "决策：", "决策:"), "需决策"),
+    (("待协调：", "待协调:", "协调：", "协调:"), "待协调"),
+    (("问题：", "问题:"), "问题"),
+]
+
+
+def _classify_issue_text(text: str) -> dict:
+    """Convert a plain-string subtask issue into a typed dict {issue_type, description, priority}."""
+    for prefixes, itype in _SUBTASK_ISSUE_PREFIXES:
+        for prefix in prefixes:
+            if text.startswith(prefix):
+                return {"issue_type": itype, "description": text[len(prefix):].strip(), "priority": "中"}
+    return {"issue_type": "问题", "description": text, "priority": "中"}
+
+
 def _issue_priority(line: str) -> str:
     if _contains_any(line, ["风险", "阻塞", "延期", "拍板", "决策", "权限", "卡住"]):
         return "高"
@@ -326,7 +402,261 @@ def _issue_rows(text: str, project: str, submitter: str | None, ceo_name: str = 
     return rows
 
 
-def _normalize_llm_result(llm_data: dict, source_type: str, text: str, submitter: str | None, ceo_name: str = "") -> dict:
+def _find_subtask_by_title(title: str, user_subtasks: list[dict]) -> dict | None:
+    """Return the first user_subtask whose title exactly or near-exactly matches `title`."""
+    if not title or not user_subtasks:
+        return None
+    t = title.strip()
+    for sub in user_subtasks:
+        if sub.get("title", "").strip() == t:
+            return sub
+    for sub in user_subtasks:
+        st = sub.get("title", "").strip()
+        if st and len(min(t, st, key=len)) >= 5 and (st in t or t in st):
+            return sub
+    return None
+
+
+def _subtasks_ordered_by_transcript(user_subtasks: list[dict], transcript_text: str) -> list[dict]:
+    """Return user_subtasks with transcript-mentioned ones first (deterministic ordering)."""
+    if not transcript_text:
+        return user_subtasks
+    mentioned, rest = [], []
+    for sub in user_subtasks:
+        title = (sub.get("title") or "").strip()
+        if title and len(title) >= 4 and title in transcript_text:
+            mentioned.append(sub)
+        else:
+            rest.append(sub)
+    return mentioned + rest
+
+
+def _normalize_task_reports(
+    raw: list,
+    submitter: str | None,
+    user_subtasks: list[dict] | None = None,
+    transcript_text: str | None = None,
+) -> list[dict]:
+    from datetime import timedelta
+    today = str(date.today())
+    default_end = str(date.today() + timedelta(days=14))
+    _user_subtasks = user_subtasks or []
+    # Transcript-mentioned subtasks come first so title matching hits them before
+    # less relevant candidates — gives deterministic priority when titles overlap.
+    _ordered_subtasks = _subtasks_ordered_by_transcript(_user_subtasks, transcript_text or "")
+    subtask_by_id: dict[int, dict] = {s["id"]: s for s in _user_subtasks if "id" in s}
+    result = []
+    for r in raw:
+        if not isinstance(r, dict):
+            continue
+        rtype = r.get("type", "progress")
+        achievements = [
+            {"name": a.get("name", ""), "achievement_type": a.get("achievement_type", "方案")}
+            for a in (r.get("achievements") or [])
+            if isinstance(a, dict) and (a.get("name") or "").strip()
+        ]
+        subtask_issues = []
+        for _si in (r.get("subtask_issues") or []):
+            if isinstance(_si, dict):
+                _desc = (_si.get("description") or "").strip()
+                if _desc:
+                    subtask_issues.append({
+                        "issue_type": _si.get("issue_type") or "问题",
+                        "description": _desc,
+                        "priority": _si.get("priority") or "中",
+                    })
+            elif isinstance(_si, str) and _si.strip():
+                subtask_issues.append(_classify_issue_text(_si.strip()))
+        next_steps = [s for s in (r.get("next_steps") or []) if isinstance(s, str) and s.strip()]
+        if rtype == "progress":
+            matched_id = r.get("matched_subtask_id")
+            status_update = (r.get("status_update") or "进行中").strip()
+            if matched_id is not None:
+                # Matched to an existing subtask — fill parent fields from user_subtasks lookup
+                sub_info = subtask_by_id.get(int(matched_id), {})
+                if status_update == "已完成":
+                    item_result_type = "subtask_complete"
+                else:
+                    item_result_type = "subtask_progress"
+                result.append({
+                    "type": "progress",
+                    "result_type": item_result_type,
+                    "matched_subtask_id": matched_id,
+                    "matched_subtask_title": (r.get("matched_subtask_title") or "").strip(),
+                    "parent_task_id": sub_info.get("parent_task_id"),
+                    "parent_key_task": sub_info.get("parent_key_task", ""),
+                    "completed": (r.get("completed") or "").strip(),
+                    "achievements": achievements,
+                    "subtask_issues": subtask_issues,
+                    "next_steps": next_steps,
+                    "status_update": status_update,
+                })
+            else:
+                # Try title-based fallback: transcript-mentioned subtasks searched first
+                candidate = (r.get("matched_subtask_title") or r.get("completed") or "").strip()[:60]
+                found = _find_subtask_by_title(candidate, _ordered_subtasks)
+                if found:
+                    rt2 = "subtask_complete" if status_update == "已完成" else "subtask_progress"
+                    result.append({
+                        "type": "progress",
+                        "result_type": rt2,
+                        "matched_subtask_id": found["id"],
+                        "matched_subtask_title": found.get("title", ""),
+                        "parent_task_id": found.get("parent_task_id"),
+                        "parent_key_task": found.get("parent_key_task", ""),
+                        "completed": (r.get("completed") or "").strip(),
+                        "achievements": achievements,
+                        "subtask_issues": subtask_issues,
+                        "next_steps": next_steps,
+                        "status_update": status_update,
+                    })
+                else:
+                    # Truly unmatched → suggest new subtask
+                    title = candidate or "待负责人确定的子任务"
+                    result.append({
+                        "type": "suggest_new_subtask",
+                        "result_type": "suggest_new_subtask",
+                        "title": title[:200],
+                        "assignee": (submitter or "").strip(),
+                        "parent_task_id": None,
+                        "parent_key_task": "",
+                        "completed": (r.get("completed") or "").strip(),
+                        "achievements": achievements,
+                        "subtask_issues": subtask_issues,
+                        "next_steps": next_steps,
+                    })
+        elif rtype == "new_task":
+            title = (r.get("title") or "").strip()
+            if not title:
+                continue
+            # Try title match before converting to suggestion; transcript hits first
+            found = _find_subtask_by_title(title, _ordered_subtasks)
+            if found:
+                status_update_nt = "进行中"
+                result.append({
+                    "type": "progress",
+                    "result_type": "subtask_progress",
+                    "matched_subtask_id": found["id"],
+                    "matched_subtask_title": found.get("title", ""),
+                    "parent_task_id": found.get("parent_task_id"),
+                    "parent_key_task": found.get("parent_key_task", ""),
+                    "completed": (r.get("completed") or "").strip() or None,
+                    "achievements": achievements,
+                    "subtask_issues": subtask_issues,
+                    "next_steps": next_steps,
+                    "status_update": status_update_nt,
+                })
+            else:
+                # new_task → suggest_new_subtask (owner must choose parent task)
+                result.append({
+                    "type": "suggest_new_subtask",
+                    "result_type": "suggest_new_subtask",
+                    "title": title,
+                    "assignee": (r.get("assignee") or submitter or "").strip(),
+                    "plan_start": r.get("plan_start") or today,
+                    "plan_end": r.get("plan_end") or default_end,
+                    "parent_task_id": None,
+                    "parent_key_task": "",
+                    "completed": None,
+                    "achievements": achievements,
+                    "subtask_issues": subtask_issues,
+                    "next_steps": next_steps,
+                })
+    return result
+
+
+def _normalize_key_task_issues(raw: list, submitter: str | None) -> list[dict]:
+    # issue_type intentionally omitted here: reviewer assigns it in the confirm center.
+    # Kept as "问题" default only for backward compat with old records that have it.
+    from ..domain import issue_flow as IF
+    result = []
+    for r in raw:
+        if not isinstance(r, dict):
+            continue
+        desc = (r.get("description") or "").strip()
+        if not desc:
+            continue
+        result.append({
+            "key_task_title": (r.get("key_task_title") or "").strip(),
+            "issue_type": IF.normalize_type(r.get("issue_type")),  # "问题" when absent
+            "description": desc,
+            "need_coordination": [s for s in (r.get("need_coordination") or []) if isinstance(s, str) and s.strip()],
+            "priority": r.get("priority") or "中",
+        })
+    return result
+
+
+_PENDING_NOISE_PREFIXES: tuple[str, ...] = (
+    "问题：", "问题:", "风险：", "风险:", "需决策：", "需决策:", "待协调：", "待协调:",
+    "需要负责人决策", "需要负责人确认", "决策：", "决策:", "风险提示：", "风险提示:",
+)
+
+
+def _normalize_pending_text(text: str) -> str:
+    """Strip noise prefixes/punctuation for dedup key comparison."""
+    t = (text or "").strip()
+    for p in _PENDING_NOISE_PREFIXES:
+        if t.startswith(p):
+            t = t[len(p):].strip()
+            break
+    t = re.sub(r"[\s，。、；：！？,.;:!?]+", "", t)
+    return t.lower()
+
+
+def _build_pending_items(
+    issues: list[dict],
+    key_task_issues: list[dict],
+    task_reports: list[dict],
+) -> list[dict]:
+    """Merge all need-to-handle items from every source into a deduplicated list.
+
+    Dedup is text-based (after stripping noise prefixes and punctuation) so that
+    "风险：脱敏数据提供偏慢" and "脱敏数据提供偏慢，影响接入" are treated as distinct
+    while exact or near-exact duplicates are collapsed.
+    """
+    seen: set[str] = set()
+    result: list[dict] = []
+
+    def _add(description: str, priority: str, related_task_title: str = "", related_subtask_title: str = "") -> None:
+        description = (description or "").strip()
+        if not description:
+            return
+        key = _normalize_pending_text(description)
+        if not key or key in seen:
+            return
+        seen.add(key)
+        item: dict = {"description": description, "priority": priority or "中"}
+        if related_task_title:
+            item["related_task_title"] = related_task_title
+        if related_subtask_title:
+            item["related_subtask_title"] = related_subtask_title
+        result.append(item)
+
+    for iss in issues:
+        _add(iss.get("description", ""), iss.get("priority", "中"))
+
+    for ki in key_task_issues:
+        _add(ki.get("description", ""), ki.get("priority", "中"), related_task_title=ki.get("key_task_title", ""))
+
+    for r in task_reports:
+        subtask_title = r.get("matched_subtask_title", "")
+        for si in r.get("subtask_issues") or []:
+            if isinstance(si, dict):
+                _add(si.get("description", ""), si.get("priority", "中"), related_subtask_title=subtask_title)
+            elif isinstance(si, str) and si.strip():
+                # plain string: strip any leading type prefix before dedup
+                raw = si.strip()
+                for p in _PENDING_NOISE_PREFIXES:
+                    if raw.startswith(p):
+                        raw = raw[len(p):].strip()
+                        break
+                _add(raw, "中", related_subtask_title=subtask_title)
+
+    return result
+
+
+def _normalize_llm_result(llm_data: dict, source_type: str, text: str, submitter: str | None, ceo_name: str = "", user_subtasks: list[dict] | None = None) -> dict:
+    from ..domain import issue_flow as IF
     # LLM 提取的 special_project 仅作展示用，不再用关键词猜测兜底
     project = (llm_data.get("special_project") or "").strip()
     completed = _dedupe(list(llm_data.get("completed_items") or []))
@@ -346,19 +676,46 @@ def _normalize_llm_result(llm_data: dict, source_type: str, text: str, submitter
         row["status"] = row.get("status") or "草稿"
 
     for row in issues:
-        issue_type = row.get("issue_type") or "问题"
-        row["issue_type"] = issue_type if issue_type in ISSUE_TYPES else "问题"
+        # Keep issue_type only as a backward-compat default ("问题"); the reviewer
+        # selects the real type in the confirm center via pending_items.
+        row["issue_type"] = IF.normalize_type(row.get("issue_type"))  # resolves None → "问题"
         row["owner"] = row.get("owner") or (submitter or "")
         row["helper"] = row.get("helper") or ""
         row["priority"] = row.get("priority") or "中"
-        row["status"] = row.get("status") or "待处理"
-        row["need_decision_by"] = row.get("need_decision_by") or (_decision_owner(row.get("description", ""), ceo_name) if row["issue_type"] == "决策" else "")
+        row["status"] = IF.normalize_status(row.get("status")) if row.get("status") else "待处理"
+        row["need_decision_by"] = row.get("need_decision_by") or ""
         row["expected_resolve_time"] = row.get("expected_resolve_time") or ""
         row["resolution"] = row.get("resolution") or ""
         row["special_project"] = row.get("special_project") or project
 
     related_task = llm_data.get("related_task") or (completed[0] if completed else (next_steps[0] if next_steps else "持续推进专项工作"))
     summary = (llm_data.get("summary") or "").strip() or _clean_text(text)[:180]
+    raw_proposed = list(llm_data.get("proposed_subtasks") or [])
+    proposed_subtasks = []
+    for ps in raw_proposed:
+        if isinstance(ps, dict) and ps.get("title", "").strip():
+            proposed_subtasks.append({
+                "title": ps["title"].strip(),
+                "assignee": ps.get("assignee") or (submitter or ""),
+                "plan_time": ps.get("plan_time") or "",
+            })
+    task_reports = _normalize_task_reports(list(llm_data.get("task_reports") or []), submitter, user_subtasks, text)
+    key_task_issues = _normalize_key_task_issues(list(llm_data.get("key_task_issues") or []), submitter)
+    pending_items = _build_pending_items(issues, key_task_issues, task_reports)
+    # Top-level result_type: only set for old-format submissions without task_reports.
+    # When task_reports is present, each item carries its own result_type.
+    if not task_reports:
+        _has_ach = bool([a for a in achievements if a.get("name")])
+        _has_iss = bool([i for i in issues if i.get("description")])
+        if _has_ach and not _has_iss:
+            _top_rt = "achievement"
+        elif _has_iss and not _has_ach:
+            _top_rt = "task_issue"
+        else:
+            _top_rt = "unknown"
+    else:
+        _top_rt = "unknown"  # defer to per-item result_type in task_reports
+
     result = {
         "summary": summary,
         "special_project": project,
@@ -367,7 +724,12 @@ def _normalize_llm_result(llm_data: dict, source_type: str, text: str, submitter
         "achievements": achievements,
         "issues": issues,
         "next_steps": next_steps,
-        "decision_items": [row["description"] for row in issues if row.get("issue_type") == "决策"],
+        "proposed_subtasks": proposed_subtasks,
+        "task_reports": task_reports,
+        "key_task_issues": key_task_issues,
+        "pending_items": pending_items,
+        "result_type": _top_rt,
+        "decision_items": [],  # no longer auto-classified; reviewer assigns in confirm center
         "status_suggestion": llm_data.get("status_suggestion") or _status(text),
         "need_coordination": _dedupe(list(llm_data.get("need_coordination") or [])),
         "confidence": 0.93,
@@ -401,6 +763,7 @@ def _normalize_llm_result(llm_data: dict, source_type: str, text: str, submitter
 
 
 def _rule_extract(source_type: str, text: str, submitter: str | None, ceo_name: str = "") -> dict:
+    from ..domain import issue_flow as IF
     clean_text = _clean_text(text)
     project = _pick_project(clean_text)
     completed = _take_sentences(
@@ -417,6 +780,10 @@ def _rule_extract(source_type: str, text: str, submitter: str | None, ceo_name: 
     )
     achievements = _achievement_rows(clean_text, project, submitter)
     issues = _issue_rows(clean_text, project, submitter, ceo_name)
+    for row in issues:
+        row["issue_type"] = IF.normalize_type(row.get("issue_type"))
+        if not row.get("status"):
+            row["status"] = "待处理"
 
     if not achievements and completed:
         achievements.append(
@@ -434,6 +801,16 @@ def _rule_extract(source_type: str, text: str, submitter: str | None, ceo_name: 
         )
 
     related_task = completed[0] if completed else (next_steps[0] if next_steps else "持续推进专项工作")
+    proposed_subtasks = [{"title": s, "assignee": submitter or "", "plan_time": ""} for s in next_steps]
+    _has_ach = bool([a for a in achievements if a.get("name")])
+    _has_iss = bool([i for i in issues if i.get("description")])
+    if _has_ach and not _has_iss:
+        _top_rt = "achievement"
+    elif _has_iss and not _has_ach:
+        _top_rt = "task_issue"
+    else:
+        _top_rt = "unknown"
+    rule_pending_items = _build_pending_items(issues, [], [])
     result = {
         "summary": clean_text[:180],
         "special_project": project,
@@ -442,9 +819,14 @@ def _rule_extract(source_type: str, text: str, submitter: str | None, ceo_name: 
         "achievements": achievements,
         "issues": issues,
         "next_steps": next_steps,
-        "decision_items": [row["description"] for row in issues if row["issue_type"] == "决策"],
+        "proposed_subtasks": proposed_subtasks,
+        "task_reports": [],
+        "key_task_issues": [],
+        "pending_items": rule_pending_items,
+        "result_type": _top_rt,
+        "decision_items": [],
         "status_suggestion": _status(clean_text),
-        "need_coordination": [row["description"] for row in issues if row["issue_type"] in {"待协调", "决策"}],
+        "need_coordination": [],
         "confidence": 0.84 if len(clean_text) >= 60 else 0.62,
         "raw_type": source_type,
         "task": {
@@ -624,7 +1006,16 @@ def extract_tasks(text: str, provider: str | None = None, project_names: list[st
         raise RuntimeError(f"AI引擎（{effective_provider}）提取任务失败：{exc}") from exc
 
 
-def extract_update(source_type: str, transcript_text: str, submitter: str | None = None, provider: str | None = None, ceo_name: str = "", *, require_llm: bool = False) -> dict:
+def extract_update(
+    source_type: str,
+    transcript_text: str,
+    submitter: str | None = None,
+    provider: str | None = None,
+    ceo_name: str = "",
+    *,
+    require_llm: bool = False,
+    user_subtasks: list[dict] | None = None,
+) -> dict:
     text = _clean_text(transcript_text)
     if not text:
         return _with_meta({
@@ -635,6 +1026,7 @@ def extract_update(source_type: str, transcript_text: str, submitter: str | None
             "achievements": [],
             "issues": [],
             "next_steps": [],
+            "task_reports": [],
             "decision_items": [],
             "status_suggestion": "进行中",
             "need_coordination": [],
@@ -662,9 +1054,9 @@ def extract_update(source_type: str, transcript_text: str, submitter: str | None
         effective_provider = LLM_PROVIDER
 
     if effective_provider:
-        llm_data = _extract_with_llm(text, effective_provider)
+        llm_data = _extract_with_llm(text, effective_provider, user_subtasks)
         if llm_data is not None:
-            return _with_meta(_normalize_llm_result(llm_data, source_type, text, submitter, ceo_name), effective_provider, True, "")
+            return _with_meta(_normalize_llm_result(llm_data, source_type, text, submitter, ceo_name, user_subtasks), effective_provider, True, "")
         if require_llm:
             raise RuntimeError(f"AI引擎（{effective_provider}）调用失败，请检查API Key配置后重试，或联系管理员")
         logger.info("LLM extract fell back to rule engine")

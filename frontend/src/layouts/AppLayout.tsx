@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useProject } from '../context/ProjectContext'
+import { getPostLoginDestination, getProjectsLandingDestination } from '../domain/authFlow'
 
 export function CenterMessage({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
@@ -93,11 +94,10 @@ function LoginPanel() {
 }
 
 export function LoginRoute() {
-  const { authState, getPreferredProjectId } = useProject()
+  const { authState, getPreferredProjectId, projects } = useProject()
 
   if (authState === 'authenticated') {
-    const pid = getPreferredProjectId()
-    return <Navigate to={pid !== null ? `/project/${pid}` : '/home'} replace />
+    return <Navigate to={getPostLoginDestination(projects, getPreferredProjectId())} replace />
   }
 
   return <LoginPanel />
@@ -105,21 +105,18 @@ export function LoginRoute() {
 
 export function ProjectsLanding() {
   const { projects } = useProject()
-  if (projects.length > 0) {
-    return <Navigate to={`/project/${projects[0].id}`} replace />
-  }
-  return <Navigate to="/home" replace />
+  return <Navigate to={getProjectsLandingDestination(projects)} replace />
 }
 
 export function RootRedirect() {
-  const { authState, getPreferredProjectId } = useProject()
+  const { authState, getPreferredProjectId, projects } = useProject()
 
   if (authState !== 'authenticated') {
     return <Navigate to="/login" replace />
   }
 
   const pid = getPreferredProjectId()
-  return <Navigate to={pid !== null ? `/project/${pid}` : '/home'} replace />
+  return <Navigate to={getPostLoginDestination(projects, pid)} replace />
 }
 
 // Kept for backward compatibility

@@ -80,11 +80,32 @@ def _row_project_id(row: models.Task, db: Session) -> int | None:
 
 
 def _assert_can_complete_from_subtasks(row: models.Task, db: Session) -> None:
-    subtasks = db.query(models.SubTask).filter_by(task_id=row.id).all()
+    subtasks = db.query(models.SubTask).filter_by(task_id=row.id).filter(models.SubTask.is_deleted.is_(False)).all()
     if not subtasks:
         raise HTTPException(409, "关键任务完成前需要先拆解并完成子任务")
     if not all(TS.is_completed(sub.status) for sub in subtasks):
         raise HTTPException(409, "关键任务完成前必须先完成全部子任务")
+
+
+def _check_close_task(context: dict, project_id: int | None, proj_name: str, db: Session) -> None:
+    """关闭关键任务（设为已完成）：仅允许项目负责人（owner）和技术管理员。
+    统筹人（coordinator）可协助推进，但不能最终关闭。"""
+    if context.get("is_tech_admin"):
+        return
+    person_id = context.get("person_id")
+    if project_id is not None and person_id is not None:
+        has_pm = db.execute(
+            text("SELECT 1 FROM project_members WHERE project_id = :pid LIMIT 1"),
+            {"pid": project_id},
+        ).fetchone()
+        if has_pm:
+            if "owner" in set(get_all_project_roles(person_id, project_id, db)):
+                return
+            raise HTTPException(403, "permission denied — 仅项目负责人（owner）或技术管理员可关闭关键任务")
+    # 旧字符串字段回落（project_members 未录入时）
+    if proj_name and context.get("project_roles", {}).get(proj_name) == PROJECT_ROLE_OWNER:
+        return
+    raise HTTPException(403, "permission denied — 仅项目负责人（owner）或技术管理员可关闭关键任务")
 
 
 def _task_is_deleted(row: models.Task) -> bool:
@@ -157,6 +178,11 @@ def list_tasks(
 
     q = db.query(models.Task)
     q = q.filter(models.Task.is_deleted.is_(bool(deleted)))
+
+    # 未指定具体项目时，只返回活跃（未归档）项目的任务
+    if effective_project_id is None and not special_project:
+        active_proj_names = db.query(models.Project.name).filter(models.Project.is_active == True)
+        q = q.filter(models.Task.special_project.in_(active_proj_names))
 
     # ── 权限：限制可见专项（旧名字逻辑，覆盖 special_project 为 NULL 的旧数据）──
     if not context["can_view_all"]:
@@ -260,9 +286,11 @@ def update_task(
         raise HTTPException(404, "task not found")
 
     project_id = _row_project_id(row, db)
-    _check_trash_access(context, project_id, row.special_project or "", db)
+    _check_write(context, project_id, row.special_project or "", db)
 
-    if TS.normalize(payload.status) == TS.S_COMPLETED:
+    closing = TS.normalize(payload.status) == TS.S_COMPLETED
+    if closing:
+        _check_close_task(context, project_id, row.special_project or "", db)
         _assert_can_complete_from_subtasks(row, db)
 
     before = crud.to_dict(row)
@@ -275,7 +303,8 @@ def update_task(
         row.project_id = new_pid
     row.edit_count = (row.edit_count or 0) + 1
     effective_pid = row.project_id or project_id
-    crud.log(db, current_user, "修改任务", "task", row.id, before, payload.dict(), project_id=effective_pid)
+    action = "负责人确认关闭关键任务" if closing else "修改任务"
+    crud.log(db, current_user, action, "task", row.id, before, payload.dict(), project_id=effective_pid)
     db.commit()
     return crud.to_dict(row)
 
@@ -334,13 +363,16 @@ def patch_status(
     project_id = _row_project_id(row, db)
     _check_write(context, project_id, row.special_project or "", db)
 
-    if TS.normalize(payload.status) == TS.S_COMPLETED:
+    closing = TS.normalize(payload.status) == TS.S_COMPLETED
+    if closing:
+        _check_close_task(context, project_id, row.special_project or "", db)
         _assert_can_complete_from_subtasks(row, db)
 
     before_status = row.status
     row.status = TS.normalize(payload.status)
     row.edit_count = (row.edit_count or 0) + 1
-    crud.log(db, current_user, "更新任务状态", "task", row.id,
+    action = "负责人确认关闭关键任务" if closing else "更新任务状态"
+    crud.log(db, current_user, action, "task", row.id,
              {"status": before_status}, {"status": payload.status},
              project_id=project_id)
     db.commit()
@@ -361,7 +393,7 @@ def restore_task(
         raise HTTPException(409, "task is not deleted")
 
     project_id = _row_project_id(row, db)
-    _check_write(context, project_id, row.special_project or "", db)
+    _check_trash_access(context, project_id, row.special_project or "", db)
 
     before = crud.to_dict(row)
     batch_id = row.delete_batch_id or ""

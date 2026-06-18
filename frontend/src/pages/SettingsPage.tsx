@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useProject } from '../context/ProjectContext'
 import { getPlatformSettings, savePlatformSettings } from '../api/platformSettings'
-import { getProjects, getProjectMembers, createProject, patchProject, archiveProject, addProjectMember, updateProjectMember, removeProjectMember } from '../api/projects'
+import { getProjects, getProjectMembers, createProject, patchProject, archiveProject, addProjectMember, updateProjectMember, removeProjectMember, batchImportProjects } from '../api/projects'
+import type { BatchImportRow } from '../api/projects'
 import { getLLMConfigs, saveLLMConfig, type LLMProviderConfig } from '../api/llmConfig'
 import { fetchPeople, createPerson, updatePerson, deletePerson, batchCreatePeople, type BatchPersonItem } from '../api/people'
+import { createAccount, fetchAccounts, resetAccountPassword, updateAccountStatus, type AccountItem } from '../api/accounts'
 import { fetchGlobalLogs, type OperationLogItem } from '../api/logs'
 import type { Project, ProjectMember, Person } from '../types'
 
@@ -24,7 +26,7 @@ const SECTIONS: { key: Section; label: string; icon: React.ReactNode }[] = [
 const THEME_COLORS = ['#0369A1', '#7C3AED', '#059669', '#DC2626', '#D97706', '#0F172A']
 
 export function SettingsPage() {
-  const { currentUser } = useProject()
+  const { currentUser, reloadProjects } = useProject()
   const [activeSection, setActiveSection] = useState<Section>('basic')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -365,7 +367,7 @@ export function SettingsPage() {
               )}
 
               {activeSection === 'projects-mgmt' && <ProjectsMgmtSection />}
-              {activeSection === 'people-mgmt' && <PeopleMgmtSection />}
+              {activeSection === 'people-mgmt' && <AccountPeopleMgmtSection />}
 
               {(['integration', 'data'] as Section[]).includes(activeSection) && (
                 <Card>
@@ -553,6 +555,7 @@ const ROLE_LABELS: Record<string, string> = {
 }
 
 function ProjectsMgmtSection() {
+  const { reloadProjects } = useProject()
   const [projects, setProjects] = useState<Project[]>([])
   const [people, setPeople] = useState<Person[]>([])
   const [loading, setLoading] = useState(true)
@@ -571,6 +574,12 @@ function ProjectsMgmtSection() {
   const [addPersonId, setAddPersonId] = useState<number | ''>('')
   const [addRole, setAddRole] = useState('member')
 
+  // 批量导入
+  const [importOpen, setImportOpen] = useState(false)
+  const [importText, setImportText] = useState('')
+  const [importRows, setImportRows] = useState<BatchImportRow[]>([])
+  const [importing, setImporting] = useState(false)
+
   useEffect(() => {
     Promise.all([getProjects(true), fetchPeople()])
       .then(([ps, ppl]) => { setProjects(ps); setPeople(ppl) })
@@ -586,13 +595,81 @@ function ProjectsMgmtSection() {
     }
   }
 
+  // 列名映射表
+  const COL_MAP: Record<string, keyof BatchImportRow> = {
+    '专项': 'project_name', '阶段': 'project_name',
+    '关键任务': 'key_task',
+    '关键成果': 'key_achievement',
+    '完成标准': 'completion_standard',
+    '统筹人': 'coordinator', '统筹': 'coordinator',
+    '负责人': 'owner',
+    '协同/成员': 'collaborators', '协同': 'collaborators', '成员': 'collaborators',
+    '计划时间': 'plan_time',
+    '当前状态': 'status', '状态': 'status',
+    '问题与需协调事项': 'issue', '问题': 'issue',
+  }
+
+  function parseImportText(text: string): BatchImportRow[] {
+    const lines = text.split('\n').map(l => l.trimEnd()).filter(l => l.trim())
+    if (lines.length < 2) return []
+    const headers = lines[0].split('\t')
+    const isHeader = headers.some(h => COL_MAP[h.trim()] !== undefined)
+    if (!isHeader) return []
+    const colFields = headers.map(h => COL_MAP[h.trim()] ?? null)
+    const rows: BatchImportRow[] = []
+    for (let i = 1; i < lines.length; i++) {
+      const cells = lines[i].split('\t')
+      const row: Partial<BatchImportRow> = {}
+      colFields.forEach((field, idx) => {
+        if (field && cells[idx] !== undefined) {
+          const val = cells[idx].trim()
+          if (val) (row as Record<string, string>)[field] = val
+        }
+      })
+      if (row.project_name && row.key_task) rows.push(row as BatchImportRow)
+    }
+    return rows
+  }
+
+  function handleImportTextChange(text: string) {
+    setImportText(text)
+    setImportRows(parseImportText(text))
+  }
+
+  async function handleImportConfirm() {
+    if (!importRows.length) return
+    setImporting(true)
+    try {
+      const res = await batchImportProjects(importRows)
+      alert(`导入完成！\n新建专项：${res.projects_created} 个\n匹配专项：${res.projects_matched} 个\n创建任务：${res.tasks_created} 条\n创建问题：${res.issues_created} 条${res.skipped_rows ? `\n跳过行数：${res.skipped_rows}` : ''}`)
+      const ps = await getProjects(true)
+      setProjects(ps)
+      reloadProjects()
+      setImportOpen(false)
+      setImportText('')
+      setImportRows([])
+    } catch {
+      alert('导入失败，请检查数据格式后重试')
+    } finally {
+      setImporting(false)
+    }
+  }
+
   async function handleCreate() {
-    if (!newName.trim()) return
+    const name = newName.trim()
+    if (!name) return
+    if (projects.some(p => p.name === name)) {
+      alert(`项目「${name}」已存在，请使用其他名称`)
+      return
+    }
     setCreating(true)
     try {
-      const p = await createProject({ name: newName.trim() })
+      const p = await createProject({ name })
       setProjects(prev => [...prev, p])
+      reloadProjects()
       setNewName(''); setShowNew(false)
+    } catch {
+      alert('创建失败，请重试')
     } finally { setCreating(false) }
   }
 
@@ -608,6 +685,14 @@ function ProjectsMgmtSection() {
     await archiveProject(pid)
     setProjects(prev => prev.map(x => x.id === pid ? { ...x, is_active: false } : x))
     if (expandedId === pid) setExpandedId(null)
+    reloadProjects()
+  }
+
+  async function handleUnarchive(pid: number, name: string) {
+    if (!window.confirm(`确认恢复「${name}」？恢复后将重新显示在驾驶舱中。`)) return
+    await patchProject(pid, { status: 'active' })
+    setProjects(prev => prev.map(x => x.id === pid ? { ...x, is_active: true } : x))
+    reloadProjects()
   }
 
   async function handleAddMember(pid: number) {
@@ -641,6 +726,12 @@ function ProjectsMgmtSection() {
             <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" />
             显示已归档
           </label>
+          <button type="button" onClick={() => setImportOpen(true)}
+            className="cursor-pointer flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border"
+            style={{ color: '#0369A1', borderColor: '#BAE6FD', background: '#F0F9FF' }}>
+            <svg style={{ width: 13, height: 13 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+            批量导入
+          </button>
           <button type="button" onClick={() => setShowNew(true)}
             className="cursor-pointer flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white text-xs font-semibold"
             style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}>
@@ -705,12 +796,17 @@ function ProjectsMgmtSection() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                   </svg>
                 </button>
-                {p.is_active && (
+                {p.is_active ? (
                   <button type="button" onClick={() => handleArchive(p.id, p.name)}
                     className="cursor-pointer p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-colors" title="归档项目">
                     <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
                     </svg>
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => handleUnarchive(p.id, p.name)}
+                    className="cursor-pointer px-2 py-1 rounded-lg text-xs font-semibold text-emerald-600 hover:bg-emerald-50 border border-emerald-200 transition-colors" title="恢复项目">
+                    恢复
                   </button>
                 )}
               </div>
@@ -790,6 +886,397 @@ function ProjectsMgmtSection() {
           )}
         </Card>
       ))}
+
+      {/* 批量导入弹窗 */}
+      {importOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(15,23,42,0.45)' }}
+          onClick={() => { if (!importing) { setImportOpen(false); setImportText(''); setImportRows([]) } }}>
+          <div className="bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+            style={{ width: 760, maxHeight: '88vh' }}
+            onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: '#E9EFF6' }}>
+              <div>
+                <div className="text-sm font-bold text-slate-800">批量导入专项与关键任务</div>
+                <div className="text-xs text-slate-400 mt-0.5">从 Excel 复制数据（Ctrl+A → Ctrl+C），粘贴到下方文本框</div>
+              </div>
+              <button onClick={() => { setImportOpen(false); setImportText(''); setImportRows([]) }}
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
+                <svg style={{ width: 15, height: 15 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            <div className="overflow-y-auto px-6 py-4 space-y-4">
+              {/* 格式说明 */}
+              <div className="rounded-xl px-4 py-3 text-xs text-slate-500 space-y-1" style={{ background: '#F8FAFC', border: '1px solid #E2E8F0' }}>
+                <div className="font-semibold text-slate-600 mb-1">支持的列名（顺序可不固定）：</div>
+                <div className="flex flex-wrap gap-2">
+                  {['专项/阶段', '关键任务', '关键成果', '完成标准', '统筹人/统筹', '负责人', '协同/成员', '计划时间', '当前状态', '问题与需协调事项'].map(col => (
+                    <span key={col} className="px-2 py-0.5 rounded-md bg-white border border-slate-200 text-slate-600">{col}</span>
+                  ))}
+                </div>
+                <div className="text-slate-400 mt-1">序号、备注等无关列会自动跳过。</div>
+              </div>
+
+              {/* 粘贴区 */}
+              <textarea
+                value={importText}
+                onChange={e => handleImportTextChange(e.target.value)}
+                placeholder={'从 Excel 粘贴数据（含表头行），例如：\n序号\t阶段\t专项\t关键任务\t关键成果\t统筹人\t负责人\t计划时间\t当前状态\n1\t项目统筹\t知识资产AI化\t确认AI升级方案\t《AI升级方案》\t刘万超\tmoways\t4-5月\t未启动'}
+                className="w-full border border-slate-200 rounded-xl p-3 text-xs font-mono focus:outline-none focus:border-indigo-400 resize-none"
+                style={{ height: 160 }}
+              />
+
+              {/* 预览表格 */}
+              {importRows.length > 0 && (
+                <div>
+                  <div className="text-xs font-semibold text-slate-500 mb-2">解析预览（共 {importRows.length} 行）</div>
+                  <div className="overflow-x-auto rounded-xl border" style={{ borderColor: '#E9EFF6' }}>
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr style={{ background: '#F8FAFC' }}>
+                          {['专项', '关键任务', '负责人', '统筹', '计划时间', '状态', '问题'].map(h => (
+                            <th key={h} className="px-3 py-2 text-left font-semibold text-slate-500 whitespace-nowrap">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importRows.map((r, i) => (
+                          <tr key={i} className="border-t" style={{ borderColor: '#F1F5F9' }}>
+                            <td className="px-3 py-2 font-semibold text-indigo-700 whitespace-nowrap">{r.project_name}</td>
+                            <td className="px-3 py-2 text-slate-700 max-w-xs truncate">{r.key_task}</td>
+                            <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{r.owner || '—'}</td>
+                            <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{r.coordinator || '—'}</td>
+                            <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{r.plan_time || '—'}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-600">{r.status || '未开始'}</span>
+                            </td>
+                            <td className="px-3 py-2 text-amber-600 max-w-xs truncate">{r.issue || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {importText && importRows.length === 0 && (
+                <div className="text-xs text-red-500 px-1">未识别到有效数据，请确认第一行为标题行，且包含「专项」或「关键任务」等列名。</div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between px-6 py-4 border-t" style={{ borderColor: '#E9EFF6' }}>
+              <div className="text-xs text-slate-400">
+                {importRows.length > 0 && `将创建/匹配专项，新增 ${importRows.length} 条关键任务${importRows.filter(r => r.issue).length > 0 ? `，写入 ${importRows.filter(r => r.issue).length} 条问题` : ''}`}
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => { setImportOpen(false); setImportText(''); setImportRows([]) }}
+                  className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100">
+                  取消
+                </button>
+                <button onClick={handleImportConfirm}
+                  disabled={importing || importRows.length === 0}
+                  className="px-4 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+                  style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}>
+                  {importing ? '导入中…' : `确认导入 ${importRows.length} 行`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AccountPeopleMgmtSection() {
+  const [people, setPeople] = useState<Person[]>([])
+  const [accounts, setAccounts] = useState<AccountItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showNew, setShowNew] = useState(false)
+  const [showBatchImport, setShowBatchImport] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newRole, setNewRole] = useState('普通成员')
+  const [newDept, setNewDept] = useState('')
+  const [newUsername, setNewUsername] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [createLoginAccount, setCreateLoginAccount] = useState(true)
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editForm, setEditForm] = useState<{ name: string; system_role: string; department: string }>({ name: '', system_role: '', department: '' })
+  const [creating, setCreating] = useState(false)
+  const [accountDraft, setAccountDraft] = useState<Record<number, { username: string; password: string }>>({})
+  const [resetDraft, setResetDraft] = useState<Record<number, string>>({})
+  const [message, setMessage] = useState('')
+
+  function loadAll() {
+    setLoading(true)
+    Promise.all([
+      fetchPeople(),
+      fetchAccounts().catch(() => [] as AccountItem[]),
+    ]).then(([peopleRows, accountRows]) => {
+      setPeople(peopleRows)
+      setAccounts(accountRows)
+    }).finally(() => setLoading(false))
+  }
+
+  useEffect(() => { loadAll() }, [])
+
+  function accountForPerson(personId: number) {
+    return accounts.find((account) => account.person_id === personId)
+  }
+
+  function showMessage(text: string) {
+    setMessage(text)
+    window.setTimeout(() => setMessage(''), 2200)
+  }
+
+  async function handleCreate() {
+    if (!newName.trim()) return
+    if (createLoginAccount && newPassword.trim().length < 6) {
+      alert('初始密码至少 6 位')
+      return
+    }
+    setCreating(true)
+    try {
+      const person = await createPerson({ name: newName.trim(), system_role: newRole, department: newDept })
+      let createdAccount: AccountItem | null = null
+      if (createLoginAccount) {
+        createdAccount = await createAccount({
+          username: (newUsername || newName).trim(),
+          password: newPassword.trim(),
+          person_id: person.id,
+          is_tech_admin: newRole === '超级管理员',
+        })
+      }
+      setPeople((prev) => [...prev, person])
+      if (createdAccount) setAccounts((prev) => [...prev, createdAccount])
+      setNewName('')
+      setNewRole('普通成员')
+      setNewDept('')
+      setNewUsername('')
+      setNewPassword('')
+      setCreateLoginAccount(true)
+      setShowNew(false)
+      showMessage('人员已创建')
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '创建失败')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  async function handleSaveEdit(id: number) {
+    const person = await updatePerson(id, {
+      name: editForm.name,
+      system_role: editForm.system_role,
+      department: editForm.department,
+    })
+    setPeople((prev) => prev.map((item) => item.id === id ? { ...item, ...person } : item))
+    setEditingId(null)
+    showMessage('人员信息已保存')
+  }
+
+  async function handleCreateAccount(person: Person) {
+    const draft = accountDraft[person.id] || { username: String(person.name || ''), password: '' }
+    if (!draft.username.trim()) return alert('请输入账号名')
+    if (draft.password.trim().length < 6) return alert('初始密码至少 6 位')
+    const account = await createAccount({
+      username: draft.username.trim(),
+      password: draft.password.trim(),
+      person_id: person.id,
+      is_tech_admin: person.system_role === '超级管理员',
+    })
+    setAccounts((prev) => [...prev, account])
+    setAccountDraft((prev) => ({ ...prev, [person.id]: { username: '', password: '' } }))
+    showMessage('登录账号已创建')
+  }
+
+  async function handleResetPassword(account: AccountItem) {
+    const password = resetDraft[account.id] || ''
+    if (password.length < 6) return alert('新密码至少 6 位')
+    await resetAccountPassword(account.id, password)
+    setResetDraft((prev) => ({ ...prev, [account.id]: '' }))
+    showMessage('密码已重置')
+    loadAll()
+  }
+
+  async function handleToggleAccount(account: AccountItem) {
+    const nextStatus = account.status === 'active' ? 'disabled' : 'active'
+    if (nextStatus === 'disabled' && !window.confirm(`确认禁用账号「${account.username}」？禁用后该用户不能登录。`)) return
+    const updated = await updateAccountStatus(account.id, nextStatus)
+    setAccounts((prev) => prev.map((item) => item.id === updated.id ? updated : item))
+    showMessage(nextStatus === 'active' ? '账号已启用' : '账号已禁用')
+  }
+
+  async function handleDelete(id: number, name: string) {
+    if (!window.confirm(`确认删除「${name}」？建议优先禁用账号，删除人员会影响项目成员关系。`)) return
+    await deletePerson(id)
+    setPeople((prev) => prev.filter((item) => item.id !== id))
+    showMessage('人员已删除')
+  }
+
+  if (loading) return <Card><p className="text-sm text-slate-400 py-8 text-center">加载中...</p></Card>
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <SectionTitle inline>人员与账号管理</SectionTitle>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => setShowBatchImport(true)}
+            className="cursor-pointer flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-indigo-200 text-indigo-600 bg-indigo-50 hover:bg-indigo-100">
+            批量导入人员
+          </button>
+          <button type="button" onClick={() => setShowNew(true)}
+            className="cursor-pointer flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white text-xs font-semibold"
+            style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}>
+            新建人员
+          </button>
+        </div>
+      </div>
+
+      {message && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700">{message}</div>}
+
+      {showBatchImport && (
+        <PeopleBatchImportModal
+          onClose={() => setShowBatchImport(false)}
+          onDone={() => {
+            loadAll()
+            setShowBatchImport(false)
+          }}
+        />
+      )}
+
+      {showNew && (
+        <Card>
+          <p className="text-sm font-semibold text-slate-700 mb-3">新建人员与登录账号</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <input autoFocus value={newName} onChange={e => setNewName(e.target.value)}
+              placeholder="姓名（必填）"
+              className="w-32 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-sky-400" />
+            <select value={newRole} onChange={e => setNewRole(e.target.value)}
+              className="w-32 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/30">
+              <option>普通成员</option>
+              <option>过程保障</option>
+              <option>组长CEO</option>
+              <option>超级管理员</option>
+            </select>
+            <input value={newDept} onChange={e => setNewDept(e.target.value)}
+              placeholder="部门（可选）"
+              className="w-36 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-sky-400" />
+            <label className="flex items-center gap-1.5 text-xs text-slate-600 px-2">
+              <input type="checkbox" checked={createLoginAccount} onChange={e => setCreateLoginAccount(e.target.checked)} />
+              同时创建登录账号
+            </label>
+            {createLoginAccount && (
+              <>
+                <input value={newUsername} onChange={e => setNewUsername(e.target.value)}
+                  placeholder="账号名，默认同姓名"
+                  className="w-40 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-sky-400" />
+                <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+                  placeholder="初始密码，至少 6 位"
+                  className="w-40 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-sky-400" />
+              </>
+            )}
+            <button type="button" onClick={handleCreate} disabled={creating || !newName.trim()}
+              className="cursor-pointer px-4 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-50" style={{ background: '#0369A1' }}>
+              {creating ? '创建中...' : '创建'}
+            </button>
+            <button type="button" onClick={() => setShowNew(false)}
+              className="cursor-pointer px-3 py-2 rounded-xl border border-slate-200 text-slate-500 text-sm">取消</button>
+          </div>
+        </Card>
+      )}
+
+      <Card>
+        {people.length === 0 ? (
+          <p className="text-sm text-slate-400 py-8 text-center">暂无人员</p>
+        ) : (
+          <div className="divide-y">
+            {people.map((person) => {
+              const account = accountForPerson(person.id)
+              const draft = accountDraft[person.id] || { username: String(person.name || ''), password: '' }
+              return (
+                <div key={person.id} className="py-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
+                      style={{ background: person.is_active === false ? '#CBD5E1' : 'linear-gradient(135deg,#3B82F6,#0369A1)' }}>
+                      {String(person.name || '?').slice(0, 1)}
+                    </div>
+
+                    {editingId === person.id ? (
+                      <div className="flex-1 flex items-center gap-2 flex-wrap">
+                        <input value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+                          className="w-24 border border-sky-400 rounded-lg px-2 py-1 text-sm focus:outline-none" />
+                        <select value={editForm.system_role} onChange={e => setEditForm(f => ({ ...f, system_role: e.target.value }))}
+                          className="w-28 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none">
+                          <option>普通成员</option>
+                          <option>过程保障</option>
+                          <option>组长CEO</option>
+                          <option>超级管理员</option>
+                        </select>
+                        <input value={editForm.department} onChange={e => setEditForm(f => ({ ...f, department: e.target.value }))}
+                          placeholder="部门" className="w-28 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none" />
+                        <button type="button" onClick={() => handleSaveEdit(person.id)}
+                          className="cursor-pointer px-3 py-1 rounded-lg text-white text-xs font-semibold" style={{ background: '#0369A1' }}>保存</button>
+                        <button type="button" onClick={() => setEditingId(null)}
+                          className="cursor-pointer px-2 py-1 rounded-lg border border-slate-200 text-slate-500 text-xs">取消</button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-semibold text-slate-800">{person.name as string}</span>
+                            {person.department && <span className="text-xs text-slate-400">{person.department as string}</span>}
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">{person.system_role || '普通成员'}</span>
+                            {person.is_active === false && <span className="text-xs text-slate-400">已停用</span>}
+                          </div>
+
+                          {!account ? (
+                            <div className="flex items-center gap-2 mt-2 flex-wrap">
+                              <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">未创建登录账号</span>
+                              <input value={draft.username} onChange={e => setAccountDraft(prev => ({ ...prev, [person.id]: { ...draft, username: e.target.value } }))}
+                                placeholder="账号名" className="w-28 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none" />
+                              <input type="password" value={draft.password} onChange={e => setAccountDraft(prev => ({ ...prev, [person.id]: { ...draft, password: e.target.value } }))}
+                                placeholder="初始密码" className="w-28 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none" />
+                              <button type="button" onClick={() => handleCreateAccount(person)}
+                                className="px-2 py-1 rounded-lg text-xs font-semibold text-white" style={{ background: '#0369A1' }}>创建账号</button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2 mt-2 flex-wrap">
+                              <span className="text-xs text-slate-500">账号：{account.username}</span>
+                              <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: account.status === 'active' ? '#DCFCE7' : '#F1F5F9', color: account.status === 'active' ? '#047857' : '#64748B' }}>
+                                {account.status === 'active' ? '可登录' : '已禁用'}
+                              </span>
+                              <input type="password" value={resetDraft[account.id] || ''} onChange={e => setResetDraft(prev => ({ ...prev, [account.id]: e.target.value }))}
+                                placeholder="新密码" className="w-24 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none" />
+                              <button type="button" onClick={() => handleResetPassword(account)}
+                                className="px-2 py-1 rounded-lg text-xs font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50">重置密码</button>
+                              <button type="button" onClick={() => handleToggleAccount(account)}
+                                className="px-2 py-1 rounded-lg text-xs font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50">
+                                {account.status === 'active' ? '禁用账号' : '启用账号'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <button type="button"
+                            onClick={() => { setEditingId(person.id); setEditForm({ name: person.name as string, system_role: (person.system_role as string) || '普通成员', department: (person.department as string) || '' }) }}
+                            className="cursor-pointer px-2 py-1 rounded-lg text-xs text-blue-600 hover:bg-blue-50">编辑</button>
+                          <button type="button" onClick={() => handleDelete(person.id, person.name as string)}
+                            className="cursor-pointer px-2 py-1 rounded-lg text-xs text-red-500 hover:bg-red-50">删除</button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </Card>
     </div>
   )
 }

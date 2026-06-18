@@ -31,6 +31,7 @@ export function DashboardPage() {
 
   const [data, setData] = useState<DashboardOverview | null>(null)
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const chartRef = useRef<HTMLCanvasElement>(null)
   const chartInstance = useRef<Chart | null>(null)
 
@@ -51,8 +52,8 @@ export function DashboardPage() {
     let cancelled = false
     setLoading(true)
     getOverview(scopeId, selectedMonth)
-      .then((d) => { if (!cancelled) setData(d) })
-      .catch(() => {})
+      .then((d) => { if (!cancelled) { setData(d); setLoadError(null) } })
+      .catch(() => { if (!cancelled) setLoadError('数据加载失败，请刷新页面重试') })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [scopeId, selectedMonth])
@@ -311,6 +312,11 @@ export function DashboardPage() {
         {loading && (
           <div className="flex items-center justify-center py-8">
             <div className="text-slate-400 text-sm">数据加载中…</div>
+          </div>
+        )}
+        {!loading && loadError && (
+          <div className="flex items-center justify-center py-8">
+            <div className="text-red-500 text-sm">{loadError}</div>
           </div>
         )}
 

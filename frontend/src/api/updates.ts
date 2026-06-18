@@ -10,11 +10,79 @@ export type CreateUpdatePayload = {
   human_result?: Record<string, unknown>  // 用户编辑后的结果（两步流程第二步传入）
 }
 
+export type UserSubtaskContext = {
+  id: number
+  title: string
+  status: string
+  parent_task_id?: number
+  parent_key_task: string
+  assignee?: string
+  user_relation?: string  // 'owner' | 'coordinator' | 'task_owner' | 'subtask_assignee'
+}
+
+export type TaskReportAchievement = {
+  name: string
+  achievement_type: string
+  file_link?: string
+}
+
+export type TaskReportProgress = {
+  type: 'progress'
+  matched_subtask_id: number | null
+  matched_subtask_title: string
+  parent_task_id?: number | null
+  parent_key_task?: string
+  completed: string
+  achievements: TaskReportAchievement[]
+  subtask_issues: string[]
+  next_steps: string[]
+  status_update: string
+}
+
+export type TaskReportNewTask = {
+  type: 'new_task'
+  title: string
+  assignee: string
+  plan_start: string
+  plan_end: string
+  completed: null
+  achievements: TaskReportAchievement[]
+  subtask_issues: string[]
+  next_steps: string[]
+}
+
+export type TaskReportSuggest = {
+  type: 'suggest_new_subtask'
+  result_type: 'suggest_new_subtask'
+  title: string
+  assignee?: string
+  plan_start?: string
+  plan_end?: string
+  completed: null
+  achievements: TaskReportAchievement[]
+  subtask_issues: string[]
+  next_steps: string[]
+  parent_task_id: number | null
+  parent_key_task: string
+}
+
+export type TaskReport = TaskReportProgress | TaskReportNewTask | TaskReportSuggest
+
+export type KeyTaskIssue = {
+  key_task_title: string
+  issue_type: string
+  description: string
+  need_coordination: string[]
+  priority: string
+}
+
 export type ExtractOnlyPayload = {
+  project_id?: number
   source_type: string
   transcript_text: string
   submitter?: string
   llm_provider?: string
+  user_subtasks?: UserSubtaskContext[]
 }
 
 export type CreateUpdateResult = {
@@ -76,4 +144,9 @@ export function getUpdate(id: number): Promise<UpdateDetail> {
 
 export function deleteUpdate(id: number): Promise<unknown> {
   return apiDelete(`/api/updates/${id}`)
+}
+
+// 语音/文字更新提取前：获取当前用户有权提交进展的子任务候选池（权限敏感）
+export function fetchVoiceContext(projectId: number): Promise<UserSubtaskContext[]> {
+  return apiGet<UserSubtaskContext[]>(`/api/updates/voice-context?project_id=${projectId}`)
 }

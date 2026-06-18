@@ -102,7 +102,30 @@ class Achievement(Base, TimestampMixin):
     confirmed_by = Column(String(50), default="")
     confirmed_at = Column(DateTime, nullable=True)
     source_submission_id = Column(Integer, nullable=True, index=True)
+    source_achievement_submission_id = Column(Integer, nullable=True, index=True)
     edit_count = Column(Integer, default=0)
+
+
+class AchievementSubmission(Base, TimestampMixin):
+    __tablename__ = "achievement_submissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
+    special_project = Column(String(80), index=True)
+    related_task_id = Column(Integer, ForeignKey("tasks.id"), nullable=True)
+    related_subtask_id = Column(Integer, nullable=True)
+    submitter = Column(String(50), default="", index=True)
+    name = Column(String(200), nullable=False)
+    achievement_type = Column(String(40), default="方案", index=True)
+    version = Column(String(30), default="V0.1")
+    file_link = Column(Text, default="")
+    scenario = Column(Text, default="")
+    reuse_tag = Column(String(80), default="")
+    status = Column(String(20), default="待确认", index=True)
+    reviewer = Column(String(50), default="")
+    reviewed_at = Column(DateTime, nullable=True)
+    reject_reason = Column(Text, default="")
+    source_type = Column(String(40), default="人工补录")
 
 
 class Issue(Base, TimestampMixin):
@@ -160,6 +183,22 @@ class Person(Base, TimestampMixin):
     is_admin = Column(Boolean, default=False)
 
 
+class Account(Base, TimestampMixin):
+    __tablename__ = "accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), nullable=False, unique=True, index=True)
+    password_hash = Column(String(128), nullable=False)
+    person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    status = Column(String(20), default="active", index=True)
+    is_tech_admin = Column(Boolean, default=False, index=True)
+    last_login_at = Column(DateTime, nullable=True)
+    last_password_changed_at = Column(DateTime, nullable=True)
+    failed_login_count = Column(Integer, default=0)
+    locked_until = Column(DateTime, nullable=True)
+    must_change_password = Column(Boolean, default=False)
+
+
 class PlatformSettings(Base, TimestampMixin):
     __tablename__ = "platform_settings"
 
@@ -202,12 +241,28 @@ class SubTask(Base, TimestampMixin):
     status = Column(String(20), default="未开始", index=True)
     completion_criteria = Column(Text, default="")
     notes = Column(Text, default="")
+    source_submission_id = Column(Integer, nullable=True, index=True)
     is_deleted = Column(Boolean, default=False, index=True)
     deleted_at = Column(DateTime, nullable=True)
     deleted_by = Column(String(50), default="")
     delete_reason = Column(Text, default="")
     delete_batch_id = Column(String(64), default="", index=True)
     deleted_by_parent_id = Column(Integer, nullable=True, index=True)
+
+
+class SubTaskDraft(Base, TimestampMixin):
+    __tablename__ = "subtask_drafts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
+    parent_task_id = Column(Integer, ForeignKey("tasks.id"), nullable=True, index=True)
+    title = Column(String(200), nullable=False)
+    proposer = Column(String(50), nullable=False, index=True)
+    assignee = Column(String(50), default="", index=True)
+    plan_time = Column(String(20), default="")
+    status = Column(String(20), default="pending", index=True)  # pending / approved / rejected
+    reject_reason = Column(Text, default="")
+    source_submission_id = Column(Integer, nullable=True, index=True)
 
 
 class ProjectMember(Base, TimestampMixin):

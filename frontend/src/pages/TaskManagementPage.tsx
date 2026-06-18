@@ -1,12 +1,14 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { exportTasksToExcel } from '../utils/exportTasksExcel'
 import { createTask, deleteTask, fetchTaskLogs, fetchTaskUpdates, fetchTasks, updateTask, extractTasksFromOutline, batchCreateTasks, restoreTask } from '../api/tasks'
 import type { TaskLog, TaskPayload, TaskUpdate, TaskDraft } from '../api/tasks'
-import { fetchSubTasks, createSubTask, patchSubTaskStatus, deleteSubTask, restoreSubTask } from '../api/subtasks'
+import { fetchSubTasks, createSubTask, patchSubTaskStatus, isPendingConfirmation, updateSubTask, deleteSubTask, restoreSubTask, fetchSubtaskDetail } from '../api/subtasks'
+import type { SubTaskDetail } from '../api/subtasks'
 import { createUpdate } from '../api/updates'
 import { apiGet } from '../api/client'
 import { useProject } from '../context/ProjectContext'
+import { canEditSubTaskStatus, canManageProjectTrash, canManageProjectWork } from '../domain/taskPermission'
 import type { TaskItem, SubTaskItem, Person, Project } from '../types'
 
 const NOT_STARTED = new Set(['未开始', 'not_started', 'notstarted'])
@@ -52,12 +54,16 @@ function projectForTask(projects: Project[], task?: TaskItem | null) {
   if (!task) return null
   return projects.find((p) => p.id === (task as any).project_id || p.name === task.special_project) ?? null
 }
+function projectForSubTask(projects: Project[], tasks: TaskItem[], sub?: SubTaskDetail | SubTaskItem | null) {
+  if (!sub) return null
+  const parent = tasks.find((task) => task.id === sub.task_id)
+  if (parent) return projectForTask(projects, parent)
+  const parentProjectName = (sub as SubTaskDetail).parent_task?.special_project
+  return projects.find((project) => project.name === parentProjectName) ?? null
+}
 function projectPeopleText(value?: string[] | string | null) {
   if (Array.isArray(value)) return value.filter(Boolean).join('、') || '—'
   return value?.trim() || '—'
-}
-function canManageTrashForRoles(isTechAdmin?: boolean, roles: string[] = []) {
-  return !!(isTechAdmin || roles.includes('owner'))
 }
 function subTaskProgress(subs?: SubTaskItem[] | null) {
   if (!subs?.length) return { done: 0, total: 0, label: '0/0' }
@@ -66,6 +72,23 @@ function subTaskProgress(subs?: SubTaskItem[] | null) {
 }
 
 function initials(name?: string) { return (name ?? '?').slice(0, 1) }
+
+function parseProgressTimeline(notes?: string | null): { date: string; text: string }[] {
+  if (!notes?.trim()) return []
+  const lines = notes.split('\n').filter(Boolean)
+  const entries: { date: string; text: string[] }[] = []
+  for (const line of lines) {
+    const m = line.match(/^\[(\d{4}-\d{2}-\d{2})\]\s*(.*)/)
+    if (m) {
+      entries.push({ date: m[1], text: [m[2].trim()] })
+    } else if (entries.length > 0) {
+      entries[entries.length - 1].text.push(line.trim())
+    } else {
+      entries.push({ date: '', text: [line.trim()] })
+    }
+  }
+  return entries.map((e) => ({ date: e.date, text: e.text.filter(Boolean).join(' ') }))
+}
 
 const AVATAR_COLORS = ['#2563EB', '#059669', '#8B5CF6', '#0891B2', '#D97706', '#F59E0B', '#EC4899', '#6366F1']
 function avatarColor(name: string) {
@@ -160,7 +183,6 @@ export function TaskManagementPage() {
   const [selectedTask, setSelectedTask] = useState<TaskItem | null>(null)
   const [formOpen, setFormOpen]       = useState(false)
   const [formTask, setFormTask]       = useState<TaskItem | null>(null)  // null = 新增
-  const [checked, setChecked]         = useState<Set<number>>(new Set())
   const [taskLogs, setTaskLogs]       = useState<TaskLog[]>([])
   const [taskUpdates, setTaskUpdates] = useState<TaskUpdate[]>([])
   const [subTasks, setSubTasks]       = useState<SubTaskItem[]>([])
@@ -170,6 +192,15 @@ export function TaskManagementPage() {
   // inline sub-task expand in table
   const [taskSubMap, setTaskSubMap]     = useState<Record<number, SubTaskItem[]>>({})
   const [expandedTasks, setExpandedTasks] = useState<Set<number>>(new Set())
+  // 子任务详情面板
+  const [selectedSubTask, setSelectedSubTask] = useState<SubTaskDetail | null>(null)
+  const [subDetailLoading, setSubDetailLoading] = useState(false)
+  const [sourceCollapsed, setSourceCollapsed] = useState(true)
+  const [subEditField, setSubEditField] = useState<string | null>(null)
+  const [subEditVal, setSubEditVal] = useState('')
+  const [subSaving, setSubSaving] = useState(false)
+  const [subEditMode, setSubEditMode] = useState(false)
+  const [subEditDraft, setSubEditDraft] = useState<Record<string, string>>({})
   const [importOpen, setImportOpen] = useState(false)
   const [searchParams] = useSearchParams()
   const [search, setSearch]           = useState('')
@@ -183,13 +214,15 @@ export function TaskManagementPage() {
   const [progressOpen, setProgressOpen] = useState(false)
   const [progressText, setProgressText] = useState('')
   const [progressSubmitState, setProgressSubmitState] = useState<'idle' | 'submitting' | 'done'>('idle')
+  const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null)
   // 专项下拉选项来自全部可见项目，而非已加载任务
   const projectOptions = projects.map((p) => p.name)
   const ownerNames = [...new Set(projects.flatMap((p) => p.owners ?? []))]
   const focusedProject = projects.find((p) => p.id === (viewProjectId ?? currentProjectId)) ?? projects[0] ?? null
   const trashProject = projects.find((p) => p.id === (viewProjectId ?? currentProjectId)) ?? null
-  const scopeProjectRoles = trashProject?.user_roles ?? currentProjectRoles
-  const canManageTrash = canManageTrashForRoles(currentUser?.is_tech_admin, scopeProjectRoles)
+  const canManageTrash = currentUser?.is_tech_admin || projects.some((p) =>
+    canManageProjectTrash({ isTechAdmin: false, projectRoles: p.user_roles ?? [] }),
+  )
 
 
   // 侧边栏切换项目时重置为全部
@@ -201,7 +234,6 @@ export function TaskManagementPage() {
   useEffect(() => {
     setSelectedTask(null)
     setExpandedTasks(new Set())
-    setChecked(new Set())
     setTaskLogs([])
     setTaskUpdates([])
     setSubTasks([])
@@ -214,6 +246,8 @@ export function TaskManagementPage() {
     }
   }, [showDeleted, canManageTrash])
 
+  const openTaskHandled = useRef(false)
+
   useEffect(() => {
     let cancelled = false
     if (showDeleted && !canManageTrash) {
@@ -221,22 +255,35 @@ export function TaskManagementPage() {
       return () => { cancelled = true }
     }
     setLoading(true)
-    const pid = showDeleted ? (viewProjectId ?? currentProjectId) : viewProjectId
+    const pid = showDeleted ? (viewProjectId ?? (currentUser?.is_tech_admin ? null : currentProjectId)) : viewProjectId
+    const openTaskId = searchParams.get('open_task')
     fetchTasks(pid, showDeleted)
-      .then((d) => { if (!cancelled) setTasks(Array.isArray(d) ? d : []) })
-      .catch(() => {})
+      .then((d) => {
+        if (cancelled) return
+        const loaded = Array.isArray(d) ? d : []
+        setTasks(loaded)
+        // Auto-open task when navigated from 我的工作台
+        if (openTaskId && !openTaskHandled.current) {
+          const target = loaded.find(t => String(t.id) === openTaskId)
+          if (target) {
+            openTaskHandled.current = true
+            openDetail(target)
+          }
+        }
+      })
+      .catch(() => { if (!cancelled) alert('任务列表加载失败，请刷新重试') })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [viewProjectId, currentProjectId, showDeleted, canManageTrash])
+  }, [viewProjectId, currentProjectId, showDeleted, canManageTrash, searchParams])
 
   // 专项下拉选项来自全部可见项目，而非已加载任务
 
   function loadTasks(nextDeleted = showDeleted) {
     const effectiveDeleted = nextDeleted && canManageTrash
-    const pid = effectiveDeleted ? (viewProjectId ?? currentProjectId) : viewProjectId
+    const pid = effectiveDeleted ? (viewProjectId ?? (currentUser?.is_tech_admin ? null : currentProjectId)) : viewProjectId
     return fetchTasks(pid, effectiveDeleted)
       .then((d) => setTasks(Array.isArray(d) ? d : []))
-      .catch(() => {})
+      .catch(() => alert('任务列表刷新失败，请重试'))
   }
 
   function loadTaskSubTaskBuckets(taskId: number) {
@@ -280,13 +327,98 @@ export function TaskManagementPage() {
       const ag = bottomGroup(a.status) ? 1 : 0
       const bg = bottomGroup(b.status) ? 1 : 0
       if (ag !== bg) return ag - bg
-      const at = a.updated_at ?? a.created_at ?? ''
-      const bt = b.updated_at ?? b.created_at ?? ''
-      return bt.localeCompare(at)
+      const at = a.created_at ?? ''
+      const bt = b.created_at ?? ''
+      return at.localeCompare(bt)
     })
+
+  function openSubDetail(st: SubTaskItem) {
+    setSelectedSubTask(null)
+    setSubDetailLoading(true)
+    setSubEditField(null)
+    setSelectedProjectKey(null)
+    fetchSubtaskDetail(st.id)
+      .then((d) => setSelectedSubTask(d))
+      .catch(() => setSelectedSubTask({ ...st } as SubTaskDetail))
+      .finally(() => setSubDetailLoading(false))
+    if (!peopleList.length)
+      apiGet<Person[]>('/api/people').then((p) => setPeopleList(p.filter((x) => x.is_active !== false))).catch(() => {})
+  }
+
+  async function handleSubStatusUpdate(status: string) {
+    if (!selectedSubTask) return
+    setSubSaving(true)
+    try {
+      const updated = await patchSubTaskStatus(selectedSubTask.id, status)
+      if (isPendingConfirmation(updated)) {
+        alert('已提交至确认中心，等待项目负责人确认')
+        return
+      }
+      const merged = { ...selectedSubTask, ...updated }
+      setSelectedSubTask(merged as SubTaskDetail)
+      setSubTasks((prev) => prev.map((x) => x.id === selectedSubTask.id ? { ...x, status } : x))
+      setTaskSubMap((prev) => {
+        const tid = selectedSubTask.task_id
+        return { ...prev, [tid]: (prev[tid] ?? []).map((x) => x.id === selectedSubTask.id ? { ...x, status } : x) }
+      })
+    } finally { setSubSaving(false) }
+  }
+
+  async function handleSubFieldSave() {
+    if (!selectedSubTask || !subEditField) return
+    setSubSaving(true)
+    try {
+      const payload = {
+        title: selectedSubTask.title,
+        assignee: selectedSubTask.assignee,
+        plan_time: selectedSubTask.plan_time,
+        status: selectedSubTask.status,
+        completion_criteria: selectedSubTask.completion_criteria ?? '',
+        notes: selectedSubTask.notes ?? '',
+      }
+      ;(payload as Record<string, unknown>)[subEditField] = subEditVal
+      const updated = await updateSubTask(selectedSubTask.id, payload)
+      const merged = { ...selectedSubTask, ...updated }
+      setSelectedSubTask(merged as SubTaskDetail)
+      setSubTasks((prev) => prev.map((x) => x.id === selectedSubTask.id ? { ...x, ...updated } : x))
+    } finally {
+      setSubSaving(false)
+      setSubEditField(null)
+    }
+  }
+
+  async function handleSubDraftSave() {
+    if (!selectedSubTask) return
+    setSubSaving(true)
+    try {
+      const payload = {
+        title: subEditDraft.title ?? selectedSubTask.title,
+        assignee: subEditDraft.assignee ?? selectedSubTask.assignee,
+        plan_time: subEditDraft.plan_time ?? selectedSubTask.plan_time ?? '',
+        status: subEditDraft.status ?? selectedSubTask.status,
+        completion_criteria: subEditDraft.completion_criteria ?? selectedSubTask.completion_criteria ?? '',
+        notes: subEditDraft.notes ?? selectedSubTask.notes ?? '',
+      }
+      const updated = await updateSubTask(selectedSubTask.id, payload)
+      const merged = { ...selectedSubTask, ...updated }
+      setSelectedSubTask(merged as SubTaskDetail)
+      setSubTasks((prev) => prev.map((x) => x.id === selectedSubTask.id ? { ...x, ...updated } : x))
+      setTaskSubMap((prev) => {
+        const tid = selectedSubTask.task_id
+        return { ...prev, [tid]: (prev[tid] ?? []).map((x) => x.id === selectedSubTask.id ? { ...x, ...updated } : x) }
+      })
+      setSubEditMode(false)
+      setSubEditDraft({})
+    } finally {
+      setSubSaving(false)
+    }
+  }
 
   function openDetail(task: TaskItem) {
     setSelectedTask(task)
+    setSelectedProjectKey(null)
+    setSelectedSubTask(null)
+    setSubDetailLoading(false)
     setTaskLogs([])
     setTaskUpdates([])
     setSubTasks([])
@@ -368,7 +500,7 @@ export function TaskManagementPage() {
     if (!parentTask || COMPLETED.has(norm(parentTask.status))) return
     if (!nextSubs.length || !nextSubs.every((s) => COMPLETED.has(norm(s.status)))) return
     const taskProject = projectForTask(projects, parentTask)
-    const canClose = !!(currentUser?.is_tech_admin || taskProject?.user_roles?.includes('owner'))
+    const canClose = !!canManageProjectTrash({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: taskProject?.user_roles ?? [] })
     if (!canClose) {
       alert('该关键任务下的子任务已全部完成，请项目负责人确认是否关闭关键任务。')
       return
@@ -407,21 +539,11 @@ export function TaskManagementPage() {
     }, 0)
   }
 
-  function toggleCheck(id: number, e: React.MouseEvent) {
-    e.stopPropagation()
-    setChecked((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
-  }
-  function toggleAll(e: React.ChangeEvent<HTMLInputElement>) {
-    setChecked(e.target.checked ? new Set(filtered.map((t) => t.id)) : new Set())
-  }
-  function clearChecked() { setChecked(new Set()) }
-
   function handleDelete(task: TaskItem) {
-    if (!confirm(`确认删除关键任务「${task.key_task}」？其下子任务会一并删除，此操作暂不能在页面内恢复。`)) return
+    if (!confirm(`确认删除关键任务「${task.key_task}」？其下子任务会一并进入回收站，可由负责人或技术管理员恢复。`)) return
     deleteTask(task.id).then(() => {
       loadTasks(false)
       if (selectedTask?.id === task.id) setSelectedTask(null)
-      setChecked((prev) => { const n = new Set(prev); n.delete(task.id); return n })
       setTaskSubMap((prev) => {
         const next = { ...prev }
         delete next[task.id]
@@ -457,19 +579,6 @@ export function TaskManagementPage() {
     }
     return order.map((key) => ({ key, tasks: map.get(key)! }))
   }, [filtered])
-
-  const allChecked = filtered.length > 0 && filtered.every((t) => checked.has(t.id))
-  const checkedCount = checked.size
-
-  async function handleBulkDelete() {
-    if (checked.size === 0) return
-    if (!confirm(`确认删除选中的 ${checked.size} 条关键任务？它们会进入回收站，子任务也会一起进入回收站。`)) return
-    const ids = [...checked]
-    await Promise.all(ids.map((id) => deleteTask(id).catch(() => {})))
-    setChecked(new Set())
-    if (selectedTask && ids.includes(selectedTask.id)) setSelectedTask(null)
-    loadTasks(false)
-  }
 
   function handleExport() {
     const proj = projects.find((p) => p.id === (viewProjectId ?? currentProjectId))
@@ -527,14 +636,14 @@ export function TaskManagementPage() {
       )}
 
       {/* Top Bar */}
-      <header className="h-16 flex items-center px-6 gap-3 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
-        <div className="flex-1">
-          <h1 className="text-base font-bold text-slate-800">项目管理</h1>
-          <p className="text-xs text-slate-400 mt-0.5">项目概览与关键任务树</p>
+      <header className="min-h-16 flex items-center px-6 py-2 gap-3 flex-shrink-0 bg-white border-b flex-wrap" style={{ borderColor: '#E9EFF6' }}>
+        <div className="min-w-[260px] flex-shrink-0">
+          <h1 className="text-base font-bold text-slate-800">工作推进表</h1>
+          <p className="text-xs text-slate-400 mt-0.5">按项目、关键任务、子任务追踪真实推进状态</p>
         </div>
 
         {/* Filters */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-1 items-center justify-end gap-2 flex-wrap">
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-slate-500 font-medium">专项</span>
             <select
@@ -557,30 +666,30 @@ export function TaskManagementPage() {
               {ownerNames.map((o) => <option key={o}>{o}</option>)}
             </select>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-slate-500 font-medium">状态</span>
-            <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none">
-              <option value="">全部状态</option>
-              <option>进行中</option><option>已完成</option><option>延期</option><option>暂缓</option><option>未开始</option>
-            </select>
-          </div>
           <div className="relative">
             <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" style={{ width: 13, height: 13 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索关键任务…" className="pl-8 pr-3 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none w-40" />
           </div>
         </div>
 
-        <div className="flex items-center gap-2 ml-1">
+        <div className="flex items-center gap-2 ml-1 flex-shrink-0">
           <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
             <button
-              onClick={() => { setSelectedTask(null); setExpandedTasks(new Set()); setChecked(new Set()); setShowDeleted(false) }}
+              onClick={() => { setSelectedTask(null); setExpandedTasks(new Set()); setShowDeleted(false) }}
               className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${!showDeleted ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
               在办
             </button>
             {canManageTrash && (
               <button
-                onClick={() => { setSelectedTask(null); setExpandedTasks(new Set()); setChecked(new Set()); setShowDeleted(true) }}
+                onClick={() => {
+                  setSelectedTask(null)
+                  setExpandedTasks(new Set())
+                  setSearch('')
+                  setFilterStatus('')
+                  setFilterOwner('')
+                  setShowDeleted(true)
+                }}
                 className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${showDeleted ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
               >
                 回收站
@@ -601,7 +710,7 @@ export function TaskManagementPage() {
           >
             <option value="" disabled>操作</option>
             <option value="export">导出表格</option>
-            {!showDeleted && (currentUser?.is_tech_admin || currentProjectRoles.includes('owner') || currentProjectRoles.includes('coordinator')) && currentProjectId && (
+            {!showDeleted && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: currentProjectRoles }) && currentProjectId && (
               <option value="import">从大纲导入</option>
             )}
             {!showDeleted && <option value="create">新增关键任务</option>}
@@ -649,703 +758,537 @@ export function TaskManagementPage() {
           })}
         </div>
 
-        {/* Batch bar */}
-        {!showDeleted && checkedCount > 0 && (
-          <div className="flex items-center gap-3">
-            <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-lg">已选择 {checkedCount} 项</span>
-            <button onClick={clearChecked} className="cursor-pointer text-xs text-slate-500 hover:text-slate-700 font-medium">清除选择</button>
-            <div className="w-px h-4 bg-slate-200" />
-            <button className="cursor-pointer flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-800 px-2.5 py-1.5 rounded-lg hover:bg-slate-100">
-              <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-              批量更新状态
-            </button>
-            <button className="cursor-pointer flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-800 px-2.5 py-1.5 rounded-lg hover:bg-slate-100">
-              <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-              指派专项负责人
-            </button>
-            <button className="cursor-pointer flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-800 px-2.5 py-1.5 rounded-lg hover:bg-slate-100">
-              <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-              批量延期
-            </button>
-            <div className="ml-auto flex items-center gap-2">
-              {canManageTrash && (
-                <button onClick={handleBulkDelete} className="cursor-pointer flex items-center gap-1.5 text-xs font-semibold text-red-500 hover:text-red-700 px-2.5 py-1.5 rounded-lg hover:bg-red-50">
-                  <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                  批量删除
-                </button>
-              )}
-              <button onClick={() => { setChecked(new Set()); setLoading(true); loadTasks().finally(() => setLoading(false)) }} className="cursor-pointer flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-600 font-medium">
-                <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                刷新
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* Project Board */}
-      <div className="flex-1 overflow-hidden relative" style={{ background: '#F1F5F9' }}>
+      {/* Main */}
+      <div className="flex-1 flex overflow-hidden" style={{ background: '#F1F5F9' }}>
         <div
-          className="h-full overflow-auto"
+          className="flex-1 overflow-y-auto"
           style={{
             background: '#F1F5F9',
             padding: '16px 20px 20px',
-            paddingRight: selectedTask ? 404 : 20,
+            paddingRight: 20,
           }}
         >
           {loading ? (
-            <div className="h-full flex items-center justify-center text-slate-400 text-sm">加载中...</div>
+            <div className="h-40 flex items-center justify-center text-slate-400 text-sm">加载中...</div>
           ) : filtered.length === 0 ? (
-            <div className="h-full flex items-center justify-center">
+            <div className="h-40 flex items-center justify-center">
               <div className="text-center text-slate-400">
                 <div className="text-sm font-semibold">暂无数据</div>
                 <div className="text-xs mt-1">当前筛选条件下没有关键任务</div>
               </div>
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="rounded-2xl bg-white border overflow-hidden shadow-sm" style={{ borderColor: '#E2E8F0' }}>
+              {/* 表头 */}
+              <div className="flex items-center px-4 py-2.5 border-b select-none" style={{ borderColor: '#E9EFF6', background: '#F8FAFC' }}>
+                <div style={{ width: 28 }} />
+                <div className="flex-1 min-w-0 pl-1 text-xs font-semibold text-slate-400">层级 / 名称</div>
+                <div className="text-xs font-semibold text-slate-400 flex-shrink-0" style={{ width: 136 }}>负责人</div>
+                <div className="text-xs font-semibold text-slate-400 flex-shrink-0" style={{ width: 108 }}>计划时间</div>
+                <div className="text-xs font-semibold text-slate-400 flex-shrink-0" style={{ width: 96 }}>状态</div>
+                <div className="text-xs font-semibold text-slate-400 flex-shrink-0" style={{ width: 68 }}>子任务</div>
+                <div className="text-xs font-semibold text-slate-400 flex-shrink-0 text-center" style={{ width: 60 }}>风险</div>
+                <div className="text-xs font-semibold text-slate-400 flex-shrink-0 text-right" style={{ width: 68 }}>操作</div>
+              </div>
+
               {groupedRows.map(({ key, tasks: groupTasks }) => {
                 const groupProject = projects.find((p) => p.name === key) ?? focusedProject
                 const groupColor = projectColor(projectOptions, key)
                 const groupDone = count(groupTasks, COMPLETED)
-                const groupProgress = groupTasks.length ? Math.round(groupDone / groupTasks.length * 100) : 0
                 const groupInProgress = count(groupTasks, IN_PROGRESS)
                 const groupDelayed = count(groupTasks, DELAYED)
-                const groupPaused = count(groupTasks, PAUSED)
                 const groupStatus = groupDelayed > 0 ? '延期' : groupInProgress > 0 ? '进行中' : groupDone === groupTasks.length ? '已完成' : '未启动'
                 const groupBadge = getBadge(groupStatus)
-                const groupLead = projectPeopleText(groupProject?.coordinator ?? groupProject?.owners?.[0])
+                const groupOwner = projectPeopleText(groupProject?.owners)
                 const collapsed = collapsedGroups.has(key)
+                const isSelProj = selectedProjectKey === key
 
                 return (
-                  <section
-                    key={key}
-                    className="rounded-2xl border bg-white shadow-[0_2px_12px_rgba(15,23,42,0.05)] overflow-hidden"
-                    style={{ borderColor: '#E2E8F0' }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => toggleGroupCollapse(key)}
-                      className="w-full text-left px-4 md:px-5 py-4 flex items-center gap-4 hover:bg-slate-50/80 transition-colors"
+                  <div key={key} className="border-b last:border-b-0" style={{ borderColor: '#E2E8F0' }}>
+                    {/* 项目行 */}
+                    <div
+                      className={`flex items-center px-3 py-3 cursor-pointer select-none transition-colors ${isSelProj ? 'bg-blue-50' : 'hover:bg-slate-50/80'}`}
+                      style={{ borderLeft: `3px solid ${groupColor}` }}
                     >
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
-                        <span
-                          className="w-9 h-9 rounded-xl flex items-center justify-center border shrink-0"
-                          style={{ borderColor: `${groupColor}30`, background: `${groupColor}12`, color: groupColor }}
-                        >
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="w-5 h-5">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7a2 2 0 012-2h4l2 2h10a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-                          </svg>
+                      <button type="button" onClick={(e) => { e.stopPropagation(); toggleGroupCollapse(key) }}
+                        className="w-7 h-7 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-600 flex-shrink-0">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 13, height: 13, transition: 'transform 0.15s', transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}>
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 9l6 6 6-6" />
+                        </svg>
+                      </button>
+                      <div className="flex-1 min-w-0 flex items-center gap-2 cursor-pointer" onClick={() => { setSelectedProjectKey(key); setSelectedTask(null); setSelectedSubTask(null); setSubDetailLoading(false) }}>
+                        <span className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0" style={{ background: `${groupColor}18`, color: groupColor }}>
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 12, height: 12 }}><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7a2 2 0 012-2h4l2 2h10a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
                         </span>
-                        <h2 className="text-lg md:text-xl font-bold text-slate-800 truncate">{key || '未分组项目'}</h2>
+                        <span className="text-sm font-bold text-slate-800 truncate">{key || '未分组项目'}</span>
+                        {groupOwner && groupOwner !== '—' && (
+                          <span className="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0" style={{ background: '#EFF6FF', color: '#1D4ED8' }}>负责人：{groupOwner}</span>
+                        )}
                       </div>
-                      <div className="hidden lg:flex items-center justify-center gap-4 shrink-0">
-                        <span className={`inline-flex items-center gap-2 px-5 py-2 rounded-full text-sm font-bold shadow-[0_8px_24px_rgba(15,23,42,0.06)] ${groupBadge.cls}`}>
-                          <span className="w-2 h-2 rounded-full" style={{ background: groupBadge.dot }} />
-                          {groupBadge.label}
-                        </span>
-                        <span className="inline-flex items-center justify-center min-w-[86px] px-5 py-2 rounded-full text-sm font-bold text-slate-700 bg-slate-50 shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
-                          {groupProgress}%
-                        </span>
-                        <span className="inline-flex items-center gap-2 px-5 py-2 rounded-full text-sm font-bold text-amber-700 bg-amber-50 shadow-[0_8px_24px_rgba(180,83,9,0.08)]">
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="w-4 h-4">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11.48 3.5a.6.6 0 011.04 0l2.34 4.74 5.23.76a.6.6 0 01.33 1.02l-3.78 3.69.89 5.2a.6.6 0 01-.87.63L12 17.08l-4.68 2.46a.6.6 0 01-.87-.63l.89-5.2-3.78-3.69A.6.6 0 013.9 9l5.23-.76 2.35-4.74z" />
-                          </svg>
-                          {groupTasks.length} 个关键任务
-                        </span>
-                        <span className="inline-flex items-center gap-2 px-5 py-2 rounded-full text-sm font-bold text-slate-600 bg-violet-50 shadow-[0_8px_24px_rgba(109,40,217,0.08)]">
-                          <Avatar name={groupLead || ' '} size={22} />
-                          统筹：{groupLead || '-'}
+                      <div className="flex items-center gap-1.5 flex-shrink-0" style={{ width: 136 }}>
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold ${groupBadge.cls}`}>
+                          <span className="w-1.5 h-1.5 rounded-full" style={{ background: groupBadge.dot }} />{groupBadge.label}
                         </span>
                       </div>
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        className="w-5 h-5 text-slate-400 shrink-0 transition-transform"
-                        style={{ transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 9l6 6 6-6" />
-                      </svg>
-                    </button>
+                      <div className="text-xs text-slate-400 flex-shrink-0" style={{ width: 108 }}>{groupTasks.length}个任务</div>
+                      <div style={{ width: 96 }} /><div style={{ width: 68 }} /><div style={{ width: 60 }} /><div style={{ width: 68 }} />
+                    </div>
 
-                    {!collapsed && (
-                      <div className="px-3 md:px-5 pb-4">
-                        <div className="rounded-2xl border bg-slate-50/70 overflow-hidden" style={{ borderColor: '#E9EFF6' }}>
-                          <div className="flex items-center gap-3 px-3 md:px-4 py-2 border-b select-none" style={{ borderColor: '#E5EEF7', background: '#F8FAFC' }}>
-                            {!showDeleted && <div className="w-5 shrink-0" />}
-                            <div className="w-5 shrink-0" />
-                            <div className="flex-1 min-w-0 text-xs font-semibold text-slate-400">关键任务</div>
-                            <div className="grid shrink-0 gap-3 text-xs font-semibold text-slate-400" style={{ gridTemplateColumns: '140px 110px 100px 78px 68px 76px' }}>
-                              <div>负责人</div>
-                              <div>计划时间</div>
-                              <div>状态</div>
-                              <div>子任务</div>
-                              <div className="text-center">风险</div>
-                              <div className="text-right">操作</div>
+                    {/* 关键任务行 */}
+                    {!collapsed && groupTasks.map((task, i) => {
+                      const taskProject = projectForTask(projects, task)
+                      const badge = getBadge(task.status)
+                      const taskExpanded = expandedTasks.has(task.id)
+                      const inlineSubs = showDeleted ? [] : (taskSubMap[task.id] ?? null)
+                      const canExpand = !showDeleted
+                      const rowDeleted = !!task.is_deleted
+                      const subProgress = subTaskProgress(inlineSubs)
+                      const taskOwner = projectPeopleText(taskProject?.owners ?? task.owner)
+                      const isSelTask = selectedTask?.id === task.id
+
+                      return (
+                        <div key={task.id}>
+                          <div
+                            className={`flex items-center border-t transition-colors ${isSelTask ? 'bg-blue-50/80' : rowDeleted ? 'bg-orange-50/60' : 'hover:bg-slate-50/60'}`}
+                            style={{ borderColor: '#E9EFF6', paddingLeft: 36, paddingRight: 12, paddingTop: 10, paddingBottom: 10 }}
+                          >
+                            {canExpand ? (
+                              <button type="button" onClick={(e) => toggleInlineSubTasks(e, task.id)}
+                                className="w-5 h-5 flex items-center justify-center rounded text-slate-400 hover:text-slate-600 flex-shrink-0 mr-1.5">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 12, height: 12, transition: 'transform 0.15s', transform: taskExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                                </svg>
+                              </button>
+                            ) : <span style={{ width: 21 }} />}
+                            <span className="text-xs font-bold px-1.5 py-0.5 rounded flex-shrink-0 mr-2" style={{ background: '#EEF2FF', color: '#6D28D9', minWidth: 20, textAlign: 'center' }}>{i + 1}</span>
+                            <div className="flex-1 min-w-0 flex items-center gap-1.5 cursor-pointer" onClick={() => openDetail(task)}>
+                              <span className="text-sm font-medium text-slate-800 truncate">{task.key_task || '-'}</span>
+                              {rowDeleted && <span className="text-xs px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0" style={{ background: '#FFEDD5', color: '#C2410C' }}>已删除</span>}
+                            </div>
+                            <div className="flex-shrink-0" style={{ width: 136 }}><OwnerCell name={taskOwner} /></div>
+                            <div className="text-xs text-slate-500 flex-shrink-0" style={{ width: 108 }}>{shortDate(task.plan_time)}</div>
+                            <div className="flex-shrink-0" style={{ width: 96 }}>
+                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${badge.cls}`} style={{ whiteSpace: 'nowrap' }}>
+                                <span className="w-1.5 h-1.5 rounded-full" style={{ background: badge.dot }} />{badge.label}
+                              </span>
+                            </div>
+                            <div className="text-xs font-bold text-blue-600 flex-shrink-0" style={{ width: 68 }}>{subProgress.label}</div>
+                            <div className="flex-shrink-0 flex justify-center" style={{ width: 60 }}>
+                              {isOverdueTask(task) ? (
+                                <span className="w-6 h-6 rounded-full bg-red-50 text-red-500 flex items-center justify-center">
+                                  <svg viewBox="0 0 20 20" fill="currentColor" style={{ width: 12, height: 12 }}><path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
+                                </span>
+                              ) : (
+                                <span className="w-6 h-6 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center">
+                                  <svg viewBox="0 0 20 20" fill="currentColor" style={{ width: 12, height: 12 }}><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex-shrink-0 flex justify-end" style={{ width: 68 }}>
+                              <button type="button" onClick={(e) => { e.stopPropagation(); openDetail(task) }} className="text-xs text-blue-600 font-semibold hover:text-blue-700">查看</button>
                             </div>
                           </div>
-                          {groupTasks.map((task, i) => {
-                            const taskProject = projectForTask(projects, task)
-                            const badge = getBadge(task.status)
-                            const taskExpanded = expandedTasks.has(task.id)
-                            const inlineSubs = showDeleted ? [] : (taskSubMap[task.id] ?? null)
-                            const canExpand = !showDeleted
-                            const rowDeleted = !!task.is_deleted
-                            const subProgress = subTaskProgress(inlineSubs)
-                            const taskOwner = projectPeopleText(taskProject?.owners ?? task.owner)
-                            const rowBg = rowDeleted ? '#FFF7ED' : isOverdueTask(task) ? '#FFF1F2' : taskExpanded ? '#EFF6FF' : 'white'
-                            const taskTags = (task.completion_standard ?? '').trim()
 
-                            return (
-                              <div
-                                key={task.id}
-                                className="border-b last:border-b-0"
-                                style={{ borderColor: '#E5EEF7', background: rowBg }}
-                              >
+                          {/* 子任务行 */}
+                          {canExpand && taskExpanded && (
+                            inlineSubs === null ? (
+                              <div className="border-t text-xs text-slate-400 py-2.5" style={{ borderColor: '#E9EFF6', paddingLeft: 76 }}>子任务加载中...</div>
+                            ) : inlineSubs.length === 0 ? (
+                              <div className="border-t text-xs text-slate-400 py-2.5" style={{ borderColor: '#E9EFF6', paddingLeft: 76 }}>暂无子任务</div>
+                            ) : inlineSubs.map((st, subIdx) => {
+                              const stBadge = getBadge(st.status)
+                              const canEditThisSub = canEditSubTaskStatus({
+                                isTechAdmin: currentUser?.is_tech_admin,
+                                projectRoles: taskProject?.user_roles ?? [],
+                                currentUserName: currentUser?.name,
+                                assignee: st.assignee,
+                              })
+                              const isSelSub = selectedSubTask?.id === st.id
+                              return (
                                 <div
-                                  className="px-3 md:px-4 py-4 cursor-pointer"
-                                  onClick={() => openDetail(task)}
+                                  key={st.id}
+                                  className={`flex items-center border-t transition-colors cursor-pointer ${isSelSub ? 'bg-purple-50/80' : 'hover:bg-purple-50/40'}`}
+                                  style={{ borderColor: '#E9EFF6', borderLeft: `4px solid ${groupColor}`, paddingLeft: 60, paddingRight: 12, paddingTop: 8, paddingBottom: 8 }}
+                                  onClick={(e) => { e.stopPropagation(); setSelectedTask(null); openSubDetail(st) }}
                                 >
-                                  <div className="flex items-center gap-3">
-                                    {!showDeleted && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => toggleCheck(task.id, e)}
-                                        className="w-5 h-5 rounded-md border flex items-center justify-center shrink-0"
-                                        style={{
-                                          borderColor: checked.has(task.id) ? '#3B82F6' : '#CBD5E1',
-                                          background: checked.has(task.id) ? '#3B82F6' : '#fff',
-                                          color: '#fff',
-                                        }}
-                                      >
-                                        {checked.has(task.id) && (
-                                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="w-3.5 h-3.5">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
-                                          </svg>
-                                        )}
-                                      </button>
-                                    )}
-                                    {canExpand ? (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => toggleInlineSubTasks(e, task.id)}
-                                        className="w-5 h-5 rounded-md flex items-center justify-center shrink-0 text-slate-400 hover:text-slate-600"
-                                      >
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="w-4 h-4 transition-transform" style={{ transform: taskExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
-                                        </svg>
-                                      </button>
+                                  <span className="flex-shrink-0 w-4" />
+                                  <span className="text-xs font-semibold flex-shrink-0 mr-2" style={{ color: groupColor, minWidth: 30 }}>{i+1}.{subIdx+1}</span>
+                                  <span className="inline-flex items-center px-1 py-0.5 rounded text-xs font-semibold flex-shrink-0 mr-2" style={{ background: '#EDE9FE', color: '#7C3AED' }}>子</span>
+                                  <span className="text-sm text-slate-700 truncate flex-1">{st.title}</span>
+                                  <div className="flex-shrink-0" style={{ width: 136 }}><OwnerCell name={st.assignee} /></div>
+                                  <div className="text-xs text-slate-500 flex-shrink-0" style={{ width: 108 }}>{shortDate(st.plan_time)}</div>
+                                  <div className="flex-shrink-0" style={{ width: 96 }} onClick={(e) => e.stopPropagation()}>
+                                    {canEditThisSub ? (
+                                      <select value={st.status} onChange={(e) => {
+                                        const ns = e.target.value
+                                        patchSubTaskStatus(st.id, ns)
+                                          .then((updated) => {
+                                            if (isPendingConfirmation(updated)) { alert('已提交至确认中心，等待项目负责人确认'); return }
+                                            setTaskSubMap((prev) => ({ ...prev, [task.id]: (prev[task.id] ?? []).map((x) => x.id === st.id ? { ...x, ...updated } : x) }))
+                                          })
+                                          .catch(() => alert('更新失败'))
+                                      }}
+                                        className="text-xs border rounded-full px-2 py-0.5 font-bold cursor-pointer focus:outline-none"
+                                        style={{ background: stBadge.cls.includes('blue') ? '#EFF6FF' : stBadge.cls.includes('emerald') ? '#F0FDF4' : stBadge.cls.includes('red') ? '#FEF2F2' : stBadge.cls.includes('amber') ? '#FFFBEB' : '#F8FAFC', color: stBadge.dot, border: `1.5px solid ${stBadge.dot}50` }}>
+                                        {['未开始','进行中','已完成','延期','暂缓'].map((s) => <option key={s}>{s}</option>)}
+                                      </select>
                                     ) : (
-                                      <span className="w-5 h-5 shrink-0" />
+                                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${stBadge.cls}`}>
+                                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: stBadge.dot }} />{stBadge.label}
+                                      </span>
                                     )}
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="text-xs font-bold rounded-lg px-2.5 py-1" style={{ background: '#EEF2FF', color: '#6D28D9' }}>{i + 1}</span>
-                                        <h3 className="text-base md:text-lg font-bold text-slate-800 truncate">{task.key_task || '-'}</h3>
-                                        {rowDeleted && (
-                                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold" style={{ background: '#FFEDD5', color: '#C2410C' }}>
-                                            已删除
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-
-                                    <div className="grid shrink-0 items-center gap-3" style={{ gridTemplateColumns: '140px 110px 100px 78px 68px 76px' }}>
-                                      <div className="min-w-0">
-                                        <OwnerCell name={taskOwner} />
-                                      </div>
-                                      <div className="text-sm text-slate-600">{shortDate(task.plan_time)}</div>
-                                      <div>
-                                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${badge.cls}`} style={{ whiteSpace: 'nowrap' }}>
-                                          <span className="w-1.5 h-1.5 rounded-full" style={{ background: badge.dot }} />
-                                          {badge.label}
-                                        </span>
-                                      </div>
-                                      <div className="text-sm font-bold text-blue-600">{subProgress.label}</div>
-                                      <div className="text-center">
-                                        {isOverdueTask(task) ? (
-                                          <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-red-50 text-red-500">
-                                            <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                                              <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                                            </svg>
-                                          </span>
-                                        ) : (
-                                          <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-emerald-50 text-emerald-500">
-                                            <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                                            </svg>
-                                          </span>
-                                        )}
-                                      </div>
-                                      <div className="text-right">
-                                        <button
-                                          type="button"
-                                          onClick={(e) => { e.stopPropagation(); openDetail(task) }}
-                                          className="inline-flex items-center gap-1.5 text-blue-600 font-semibold hover:text-blue-700"
-                                        >
-                                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="w-4 h-4">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0zm7.5 0s-3.5 7-10.5 7S1.5 12 1.5 12 5 5 12 5s10.5 7 10.5 7z" />
-                                          </svg>
-                                          查看
-                                        </button>
-                                      </div>
-                                    </div>
                                   </div>
-
+                                  <div style={{ width: 68 }} /><div style={{ width: 60 }} />
+                                  <div className="flex justify-end flex-shrink-0" style={{ width: 68 }}>
+                                    <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedTask(null); openSubDetail(st) }} className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">详情</button>
+                                  </div>
                                 </div>
-
-                                {canExpand && taskExpanded && (
-                                  <div>
-                                    {inlineSubs === null ? (
-                                      <div className="px-10 py-3 text-sm text-slate-400 border-t" style={{ borderColor: '#E5EEF7' }}>子任务加载中...</div>
-                                    ) : inlineSubs.length === 0 ? (
-                                      <div className="px-10 py-3 text-sm text-slate-400 border-t" style={{ borderColor: '#E5EEF7' }}>暂无子任务</div>
-                                    ) : inlineSubs.map((st, subIdx) => {
-                                      const stBadge = getBadge(st.status)
-                                      const canDeleteSub = canManageTrashForRoles(currentUser?.is_tech_admin, taskProject?.user_roles ?? [])
-                                      return (
-                                        <div
-                                          key={st.id}
-                                          className="flex items-center gap-3 px-3 md:px-4 py-3 border-t hover:bg-blue-50/40 transition-colors cursor-pointer"
-                                          style={{ borderColor: '#E5EEF7', borderLeft: `4px solid ${groupColor}` }}
-                                          onClick={() => openDetail(task)}
-                                        >
-                                          {!showDeleted && <div className="w-5 shrink-0" />}
-                                          <div className="flex items-center gap-2 flex-1 min-w-0">
-                                            <span className="w-2 h-2 rounded-full shrink-0" style={{ background: groupColor }} />
-                                            <span className="text-xs font-bold shrink-0" style={{ color: groupColor, minWidth: 28 }}>{i + 1}.{subIdx + 1}</span>
-                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold shrink-0" style={{ background: '#EDE9FE', color: '#7C3AED' }}>子任务</span>
-                                            <span className="text-sm font-medium text-slate-700 truncate">{st.title}</span>
-                                          </div>
-                                          <div className="grid shrink-0 items-center gap-3" style={{ gridTemplateColumns: '140px 110px 100px 78px 68px 76px' }}>
-                                            <OwnerCell name={st.assignee} />
-                                            <div className="text-sm text-slate-600">{shortDate(st.plan_time)}</div>
-                                            <div>
-                                              <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${stBadge.cls}`} style={{ whiteSpace: 'nowrap' }}>
-                                                <span className="w-1.5 h-1.5 rounded-full" style={{ background: stBadge.dot }} />
-                                                {stBadge.label}
-                                              </span>
-                                            </div>
-                                            <div />
-                                            <div />
-                            <div className="text-right" onClick={(e) => e.stopPropagation()}>
-                                              {canDeleteSub && !showDeleted && (
-                                                <button
-                                                  type="button"
-                                                  onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    if (!confirm(`确认删除子任务「${st.title}」？`)) return
-                                                    deleteSubTask(st.id).then(() => {
-                                                      setTaskSubMap((prev) => ({ ...prev, [task.id]: (prev[task.id] ?? []).filter((s) => s.id !== st.id) }))
-                                                      refreshParentTask(task.id)
-                                                    }).catch(() => alert('删除失败'))
-                                                  }}
-                                                  className="inline-flex items-center gap-1 text-xs font-semibold text-red-500 hover:text-red-700"
-                                                >
-                                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="w-3.5 h-3.5">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                                  </svg>
-                                                  删除
-                                                </button>
-                                              )}
-                                            </div>
-                                          </div>
-                                        </div>
-                                      )
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            )
-                          })}
+                              )
+                            })
+                          )}
                         </div>
-                      </div>
-                    )}
-                  </section>
+                      )
+                    })}
+                  </div>
                 )
               })}
             </div>
           )}
         </div>
 
-        {/* Detail Panel */}
-        {selectedTask && (() => {
-          const taskProject = projectForTask(projects, selectedTask)
-          const taskRoles = taskProject?.user_roles ?? []
-          const isDeletedTask = !!selectedTask.is_deleted
-          const canOwn = !!(currentUser?.is_tech_admin || taskRoles.includes('owner') || taskRoles.includes('coordinator'))
-          const canTrashTask = canManageTrashForRoles(currentUser?.is_tech_admin, taskRoles)
-          const canSubmitSubTask = !!(currentUser?.is_tech_admin || taskRoles.length > 0) && !isDeletedTask
-          const detailProgress = subTaskProgress(subTasks)
-          return (
-          <div className="fixed top-16 right-0 bottom-0 z-30 flex flex-col overflow-hidden shadow-2xl" style={{ width: 380, borderLeft: '1px solid #E9EFF6', background: '#fff' }}>
-            <div className="flex items-center justify-between px-4 py-3 border-b flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
-              <h2 className="text-sm font-bold text-slate-800">关键任务详情</h2>
-              <button onClick={() => setSelectedTask(null)} className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
-                <svg style={{ width: 16, height: 16 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
+        <aside
+          data-testid="work-progress-detail-panel"
+          className="w-[380px] flex-shrink-0 border-l bg-white flex flex-col overflow-hidden"
+          style={{ borderColor: '#E2E8F0' }}
+        >
+          {(() => {
+            const projectDetail = selectedProjectKey
+              ? projects.find((project) => project.name === selectedProjectKey) ?? null
+              : null
+            const selectedTaskProject = projectForTask(projects, selectedTask)
+            const selectedSubProject = projectForSubTask(projects, tasks, selectedSubTask)
+            const subParent = selectedSubTask
+              ? tasks.find((task) => task.id === selectedSubTask.task_id) ?? null
+              : null
 
-            <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
-
-              {/* 基本信息 */}
-              <div>
-                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">基本信息</h3>
-                <div className="rounded-xl p-3 space-y-0.5" style={{ background: '#F8FAFC', border: '1px solid #E9EFF6' }}>
-                  {[
-                    { label: '专项',   value: taskProject?.name ?? selectedTask.special_project, highlight: true },
-                    { label: '关键任务', value: selectedTask.key_task },
-                    { label: '专项负责人', value: projectPeopleText(taskProject?.owners ?? selectedTask.owner) },
-                    { label: '专项统筹', value: projectPeopleText(taskProject?.coordinator ?? selectedTask.coordinator) },
-                    { label: '专项协同', value: projectPeopleText(taskProject?.collaborators ?? selectedTask.collaborators) },
-                    { label: '计划时间', value: selectedTask.plan_time },
-                    { label: '删除状态', value: isDeletedTask ? `已删除 · ${selectedTask.deleted_by || '系统'}` : undefined },
-                    { label: '删除时间', value: isDeletedTask ? shortDate(selectedTask.deleted_at) : undefined },
-                    { label: '删除原因', value: isDeletedTask ? (selectedTask.delete_reason || '—') : undefined },
-                    { label: '子任务进度', value: detailProgress.label },
-                    { label: '确认入库', value: selectedTask.confirmed_by ? `由 ${selectedTask.confirmed_by} 入库` : undefined },
-                    { label: '修改次数', value: (selectedTask.edit_count ?? 0) > 0 ? `已编辑 ${selectedTask.edit_count} 次` : undefined },
-                  ].map(({ label, value, highlight }) => value ? (
-                    <div key={label} className="flex items-start gap-2 py-1.5 border-b border-slate-100 text-xs last:border-b-0">
-                      <span className="w-16 flex-shrink-0 text-slate-500 font-semibold">{label}</span>
-                      <span className="flex-1" style={{ color: highlight ? '#0369A1' : '#1E293B', fontWeight: highlight ? 600 : 400, lineHeight: 1.5 }}>{value}</span>
-                    </div>
-                  ) : null)}
-                  <div className="flex items-center gap-2 py-1.5 text-xs">
-                    <span className="w-16 flex-shrink-0 text-slate-500 font-semibold">当前状态</span>
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-semibold ${getBadge(selectedTask.status).cls}`}>
-                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: getBadge(selectedTask.status).dot }} />
-                      {getBadge(selectedTask.status).label}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* 完成标准 高亮块 */}
-              {selectedTask.completion_standard && (
-                <div>
-                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">完成标准</h3>
-                  <div className="rounded-xl p-3" style={{ background: 'linear-gradient(135deg,#EFF6FF,#EEF2FF)', border: '1px solid #A5B4FC' }}>
-                    <div className="flex items-start gap-2">
-                      <div className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 mt-0.5" style={{ background: '#6366F1' }}>
-                        <svg style={{ width: 11, height: 11, color: 'white' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9" />
+            if (selectedSubTask || subDetailLoading) {
+              const badge = getBadge(selectedSubTask?.status)
+              const subCanEdit = selectedSubTask && canEditSubTaskStatus({
+                isTechAdmin: currentUser?.is_tech_admin,
+                projectRoles: selectedSubProject?.user_roles ?? [],
+                currentUserName: currentUser?.name,
+                assignee: selectedSubTask.assignee,
+              })
+              return (
+                <div className="flex flex-col h-full overflow-hidden">
+                  {/* 顶部：返回按钮 + 标题 + 关闭 */}
+                  <div className="px-5 pt-4 pb-3 border-b flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
+                    <div className="flex items-center justify-between mb-2">
+                      <button
+                        onClick={() => { setSelectedSubTask(null); setSubDetailLoading(false) }}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-blue-600 transition-colors"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 12, height: 12 }}>
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
                         </svg>
-                      </div>
-                      <p className="text-xs leading-relaxed flex-1" style={{ color: '#3730A3', lineHeight: 1.6 }}>{selectedTask.completion_standard}</p>
+                        {selectedTask ? '返回关键任务' : '返回列表'}
+                      </button>
+                      <button
+                        onClick={() => { setSelectedSubTask(null); setSubDetailLoading(false); setSelectedTask(null) }}
+                        className="w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 13, height: 13 }}>
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
                     </div>
+                    <p className="text-xs text-slate-400 font-semibold">子任务详情</p>
+                    <h2 className="text-sm font-bold text-slate-900 mt-0.5 leading-snug">{selectedSubTask?.title ?? '加载中...'}</h2>
                   </div>
-                </div>
-              )}
 
-              {/* 问题与协调 */}
-              {selectedTask.problem_note && (
-                <div>
-                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">问题与协调</h3>
-                  <p className="text-xs text-slate-600 leading-relaxed p-3 rounded-xl" style={{ background: '#FFF7ED', border: '1px solid #FED7AA' }}>{selectedTask.problem_note}</p>
-                </div>
-              )}
+                  {/* 滚动区 */}
+                  <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                    {subDetailLoading && !selectedSubTask ? (
+                      <p className="text-xs text-slate-400 text-center py-8">加载中…</p>
+                    ) : selectedSubTask ? (
+                      <>
+                        {/* 基本信息 */}
+                        <div className="rounded-xl border overflow-hidden" style={{ borderColor: '#E9EFF6' }}>
+                          {([
+                            { label: '所属项目', value: selectedSubProject?.name },
+                            { label: '关键任务', value: subParent?.key_task ?? selectedSubTask.parent_task?.key_task },
+                            { label: '负责人', value: selectedSubTask.assignee },
+                            { label: '计划时间', value: selectedSubTask.plan_time },
+                          ] as { label: string; value?: string }[]).filter((r) => r.value).map((row) => (
+                            <div key={row.label} className="flex gap-3 px-4 py-2.5 border-b last:border-b-0" style={{ borderColor: '#F1F5F9' }}>
+                              <span className="w-16 shrink-0 text-xs font-semibold text-slate-400">{row.label}</span>
+                              <span className="flex-1 text-xs font-semibold text-slate-700">{row.value || '—'}</span>
+                            </div>
+                          ))}
+                        </div>
 
-              {/* 关键成果 */}
-              {selectedTask.key_achievement && (
-                <div>
-                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">关键成果</h3>
-                  <div className="flex items-center justify-between p-2.5 rounded-lg cursor-pointer hover:bg-slate-50" style={{ border: '1px solid #E9EFF6' }}>
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-md flex items-center justify-center" style={{ background: '#EFF6FF' }}>
-                        <svg style={{ width: 11, height: 11, color: '#2563EB' }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                      </div>
-                      <span className="text-xs font-medium text-blue-600">{selectedTask.key_achievement}</span>
-                    </div>
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${getBadge(selectedTask.status).cls}`} style={{ fontSize: 10 }}>
-                      {getBadge(selectedTask.status).label}
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* 任务时间线 */}
-              {taskLogs.length > 0 && (
-                <div>
-                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">任务时间线</h3>
-                  <div className="pl-1">
-                    {taskLogs.map((log, i) => {
-                      const isLast = i === taskLogs.length - 1
-                      const isActive = isLast
-                      return (
-                        <div key={i} className="flex items-start gap-3 pb-4 relative">
-                          {!isLast && (
-                            <div style={{ position: 'absolute', left: 7, top: 18, width: 1.5, height: 'calc(100% - 8px)', background: '#E9EFF6' }} />
+                        {/* 当前状态 */}
+                        <div>
+                          <p className="text-xs font-bold text-slate-500 mb-1.5">当前状态</p>
+                          {subCanEdit ? (
+                            <select
+                              value={selectedSubTask.status ?? ''}
+                              onChange={(e) => handleSubStatusUpdate(e.target.value)}
+                              disabled={subSaving}
+                              className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold focus:outline-none focus:border-indigo-300"
+                            >
+                              {['未开始', '进行中', '已完成', '延期', '暂缓'].map((s) => <option key={s}>{s}</option>)}
+                            </select>
+                          ) : (
+                            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${badge.cls}`}>
+                              <span className="w-1.5 h-1.5 rounded-full" style={{ background: badge.dot }} />{badge.label}
+                            </span>
                           )}
-                          <div style={{
-                            width: 16, height: 16, borderRadius: '50%', flexShrink: 0, marginTop: 1,
-                            border: `2px solid ${isActive ? '#0369A1' : '#059669'}`,
-                            background: isActive ? '#0369A1' : '#059669',
-                          }} />
+                        </div>
+
+                        {/* 完成标准 */}
+                        {selectedSubTask.completion_criteria && (
                           <div>
-                            <p className="text-xs font-semibold" style={{ color: isActive ? '#0369A1' : '#334155' }}>{log.action}</p>
-                            <p className="text-xs text-slate-400 mt-0.5">{log.operator} · {log.created_at}</p>
-                            {log.note && <p className="text-xs text-slate-500 mt-0.5 leading-snug">{log.note}</p>}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* 最新更新记录 */}
-              {taskUpdates.length > 0 && (
-                <div>
-                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">最新更新记录</h3>
-                  <div className="space-y-2.5">
-                    {taskUpdates.map((u) => (
-                      <div key={u.id} className="p-2.5 rounded-lg" style={{ background: '#F8FAFC', border: '1px solid #E9EFF6' }}>
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="flex items-center gap-1.5">
-                            <span style={{ marginLeft: 0 }}><Avatar name={u.submitter} size={22} /></span>
-                            <span className="text-xs font-semibold text-slate-700 ml-1">{u.submitter}</span>
-                          </div>
-                          <span className="text-xs text-slate-400">{u.created_at}</span>
-                        </div>
-                        <p className="text-xs text-slate-500 leading-snug mt-1">{u.transcript_text || '—'}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* ── 子任务 ── */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    子任务
-                    {subTasks.length > 0 && (
-                      <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-xs font-bold" style={{ background: '#DBEAFE', color: '#1D4ED8' }}>{subTasks.length}</span>
-                    )}
-                  </h3>
-                  {canSubmitSubTask && (
-                    <button
-                      onClick={() => setSubTaskFormOpen(true)}
-                      className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold text-white hover:opacity-90"
-                      style={{ background: 'linear-gradient(135deg,#6366F1,#818CF8)' }}
-                    >
-                      <svg style={{ width: 11, height: 11 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" /></svg>
-                      添加
-                    </button>
-                  )}
-                </div>
-                {subTasks.length === 0 ? (
-                  <p className="text-xs text-slate-400 py-3 text-center rounded-xl" style={{ border: '1.5px dashed #E2E8F0' }}>暂无子任务</p>
-                ) : (
-                  <div className="space-y-2">
-                    {subTasks.map((st) => {
-                      const stBadge = getBadge(st.status)
-                      const isMyTask = currentUser?.name === st.assignee
-                      const canEditSt = canOwn || isMyTask
-                      const isNotStarted = norm(st.status) === norm('未开始')
-                      return (
-                        <div key={st.id} className="p-2.5 rounded-xl" style={{ background: isNotStarted ? '#F8FAFC' : '#F0FDF4', border: `1px solid ${isNotStarted ? '#E9EFF6' : '#BBF7D0'}` }}>
-                          <div className="flex items-start justify-between gap-2">
-                            <p className="text-xs font-semibold text-slate-700 leading-snug flex-1">{st.title}</p>
-                            <div className="flex items-center gap-1.5 flex-shrink-0">
-                              {canOwn && isNotStarted && (
-                                <button
-                                  onClick={() =>
-                                    patchSubTaskStatus(st.id, '进行中')
-                                      .then((updated) => {
-                                        const next = subTasks.map((x) => x.id === st.id ? updated : x)
-                                        setSubTasks(next)
-                                        refreshParentTask(st.task_id)
-                                        maybePromptCloseKeyTask(st.task_id, next)
-                                      })
-                                      .catch(() => alert('下发失败，请重试'))
-                                  }
-                                  className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold text-white hover:opacity-90"
-                                  style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}
-                                >
-                                  <svg style={{ width: 10, height: 10 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
-                                  </svg>
-                                  下发
-                                </button>
-                              )}
-                              {canTrashTask && (
-                                <button
-                                  onClick={() => { if (confirm(`确认删除子任务「${st.title}」？此操作暂不能在页面内恢复。`)) deleteSubTask(st.id).then(() => {
-                                    if (selectedTask) {
-                                      loadTaskSubTaskBuckets(selectedTask.id).catch(() => {})
-                                      refreshParentTask(selectedTask.id)
-                                    }
-                                  }).catch(() => alert('删除失败')) }}
-                                  className="text-red-300 hover:text-red-500"
-                                >
-                                  <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                                </button>
-                              )}
+                            <p className="text-xs font-bold text-slate-500 mb-1.5">完成标准</p>
+                            <div className="rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2.5 text-xs text-indigo-900 leading-relaxed">
+                              {selectedSubTask.completion_criteria}
                             </div>
                           </div>
-                          <div className="flex items-center gap-2 mt-1.5">
-                            <div className="flex items-center gap-1">
-                              <span style={{ marginLeft: 0 }}><Avatar name={st.assignee} size={18} /></span>
-                              <span className="text-xs text-slate-500 ml-1">{st.assignee}</span>
-                            </div>
-                            {st.plan_time && <span className="text-xs text-slate-400">{shortDate(st.plan_time)}</span>}
-                          </div>
-                          <div className="flex items-center gap-2 mt-1.5">
-                            {canEditSt ? (
-                              <select
-                                value={st.status}
-                                onChange={(e) => {
-                                  const newStatus = e.target.value
-                                  patchSubTaskStatus(st.id, newStatus)
-                                    .then((updated) => {
-                                      const next = subTasks.map((x) => x.id === st.id ? updated : x)
-                                      setSubTasks(next)
-                                      refreshParentTask(st.task_id)
-                                      maybePromptCloseKeyTask(st.task_id, next)
-                                    })
-                                    .catch(() => alert('更新失败'))
-                                }}
-                                className="text-xs border rounded-full px-2 py-0.5 font-semibold cursor-pointer focus:outline-none"
-                                style={{ background: stBadge.cls.includes('blue') ? '#EFF6FF' : stBadge.cls.includes('emerald') ? '#F0FDF4' : stBadge.cls.includes('red') ? '#FEF2F2' : stBadge.cls.includes('amber') ? '#FFFBEB' : '#F8FAFC', color: stBadge.dot, border: `1px solid ${stBadge.dot}40` }}
-                              >
-                                {['未开始','进行中','已完成','延期','暂缓'].map((s) => <option key={s}>{s}</option>)}
-                              </select>
-                            ) : (
-                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${stBadge.cls}`}>
-                                <span className="w-1.5 h-1.5 rounded-full" style={{ background: stBadge.dot }} />
-                                {stBadge.label}
-                              </span>
-                            )}
-                            {st.completion_criteria && (
-                              <span className="text-xs text-indigo-500 truncate" title={st.completion_criteria}>📌 {st.completion_criteria.slice(0, 20)}{st.completion_criteria.length > 20 ? '…' : ''}</span>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
+                        )}
 
-                {canTrashTask && trashedSubTasks.length > 0 && (
-                  <div className="mt-4 pt-4 border-t" style={{ borderColor: '#E9EFF6' }}>
-                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                      回收站子任务
-                      <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-xs font-bold" style={{ background: '#FFEDD5', color: '#C2410C' }}>{trashedSubTasks.length}</span>
-                    </h4>
-                    <div className="space-y-2">
-                      {trashedSubTasks.map((st) => {
-                        const stBadge = getBadge(st.status)
-                        return (
-                          <div key={`trash-${st.id}`} className="p-2.5 rounded-xl" style={{ background: '#FFF7ED', border: '1px solid #FDBA74' }}>
-                            <div className="flex items-start justify-between gap-2">
-                              <p className="text-xs font-semibold text-orange-900 leading-snug flex-1">{st.title}</p>
-                              {!isDeletedTask ? (
-                                <button
-                                  onClick={() => handleRestoreSubTask(st)}
-                                  className="text-xs font-semibold text-orange-700 hover:text-orange-900"
-                                >
-                                  恢复
-                                </button>
-                              ) : (
-                                <span className="text-[11px] font-semibold text-orange-600">随关键任务恢复</span>
-                              )}
+                        {/* 进展记录 */}
+                        <div>
+                          <p className="text-xs font-bold text-slate-500 mb-1.5">进展记录</p>
+                          {parseProgressTimeline(selectedSubTask.notes).length > 0 ? (
+                            <div className="space-y-2">
+                              {parseProgressTimeline(selectedSubTask.notes).map((entry, idx) => (
+                                <div key={`${entry.date}-${idx}`} className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
+                                  {entry.date && <p className="text-xs font-semibold text-slate-400 mb-0.5">{entry.date}</p>}
+                                  <p className="text-xs text-slate-700 leading-relaxed">{entry.text}</p>
+                                </div>
+                              ))}
                             </div>
-                            <div className="flex items-center gap-2 mt-1.5">
-                              <div className="flex items-center gap-1">
-                                <span style={{ marginLeft: 0 }}><Avatar name={st.assignee} size={18} /></span>
-                                <span className="text-xs text-slate-500 ml-1">{st.assignee}</span>
+                          ) : (
+                            <p className="text-xs text-slate-400">暂无进展记录</p>
+                          )}
+                        </div>
+
+                        {/* 来源信息 */}
+                        {selectedSubTask.source_submission && (
+                          <div>
+                            <p className="text-xs font-bold text-slate-500 mb-1.5">来源</p>
+                            <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
+                              <div className="flex items-center gap-2 flex-wrap mb-1">
+                                <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs font-semibold">{selectedSubTask.source_submission.source_type}</span>
+                                <span className="text-xs text-slate-500">{selectedSubTask.source_submission.submitter}</span>
+                                <span className="text-xs text-slate-400">{selectedSubTask.source_submission.created_at?.slice(0, 10)}</span>
                               </div>
-                              {st.plan_time && <span className="text-xs text-slate-400">{shortDate(st.plan_time)}</span>}
-                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${stBadge.cls}`} style={{ marginLeft: 'auto' }}>
-                                <span className="w-1.5 h-1.5 rounded-full" style={{ background: stBadge.dot }} />
-                                {stBadge.label}
-                              </span>
+                              {selectedSubTask.source_submission.title && (
+                                <p className="text-xs text-slate-700 font-medium">{selectedSubTask.source_submission.title}</p>
+                              )}
                             </div>
                           </div>
-                        )
-                      })}
+                        )}
+
+                        {/* 关联成果 */}
+                        {selectedSubTask.related_achievements && selectedSubTask.related_achievements.length > 0 && (
+                          <div>
+                            <p className="text-xs font-bold text-slate-500 mb-1.5">关联成果（{selectedSubTask.related_achievements.length}）</p>
+                            <div className="space-y-1.5">
+                              {selectedSubTask.related_achievements.map((ach) => (
+                                <div key={ach.id} className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
+                                  <p className="text-xs font-semibold text-amber-900">{ach.name}</p>
+                                  <p className="text-xs text-amber-600 mt-0.5">{ach.achievement_type} · {ach.status}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* 关联问题 */}
+                        {selectedSubTask.related_issues && selectedSubTask.related_issues.length > 0 && (
+                          <div>
+                            <p className="text-xs font-bold text-slate-500 mb-1.5">关联问题（{selectedSubTask.related_issues.length}）</p>
+                            <div className="space-y-1.5">
+                              {selectedSubTask.related_issues.map((issue) => (
+                                <div key={issue.id} className="rounded-lg border border-red-100 bg-red-50 px-3 py-2">
+                                  <p className="text-xs text-red-800 leading-relaxed">{issue.description}</p>
+                                  <p className="text-xs text-red-500 mt-0.5">{issue.issue_type} · {issue.priority} · {issue.status}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              )
+            }
+
+            if (selectedTask) {
+              const badge = getBadge(selectedTask.status)
+              const detailProgress = subTaskProgress(subTasks)
+              const canOwn = canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: selectedTaskProject?.user_roles ?? [] })
+              const canTrashTask = !!(selectedTaskProject && canManageProjectTrash({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: selectedTaskProject.user_roles ?? [] }))
+              return (
+                <div className="flex flex-col h-full overflow-hidden">
+                  {/* 标题栏 */}
+                  <div className="px-5 py-4 border-b flex-shrink-0 flex items-start justify-between gap-3" style={{ borderColor: '#E9EFF6' }}>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-slate-400">关键任务详情</p>
+                      <h2 className="text-sm font-bold text-slate-900 mt-0.5 leading-snug">{selectedTask.key_task}</h2>
+                    </div>
+                    <button
+                      onClick={() => setSelectedTask(null)}
+                      className="w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 flex-shrink-0"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 13, height: 13 }}>
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  {/* 滚动区 */}
+                  <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                    {/* 状态 + 进度 */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${badge.cls}`}>
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: badge.dot }} />{badge.label}
+                      </span>
+                      {subTasks.length > 0 && (
+                        <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full">{detailProgress.label} 子任务</span>
+                      )}
+                    </div>
+
+                    {/* 基本信息 */}
+                    <div className="rounded-xl border overflow-hidden" style={{ borderColor: '#E9EFF6' }}>
+                      {([
+                        { label: '所属项目', value: selectedTaskProject?.name ?? selectedTask.special_project },
+                        { label: '负责人', value: projectPeopleText(selectedTaskProject?.owners ?? selectedTask.owner) },
+                        { label: '统筹人', value: projectPeopleText(selectedTaskProject?.coordinator ?? selectedTask.coordinator) },
+                        { label: '计划时间', value: shortDate(selectedTask.plan_time) },
+                      ] as { label: string; value?: string }[]).filter((r) => r.value).map((row) => (
+                        <div key={row.label} className="flex gap-3 px-4 py-2.5 border-b last:border-b-0" style={{ borderColor: '#F1F5F9' }}>
+                          <span className="w-16 shrink-0 text-xs font-semibold text-slate-400">{row.label}</span>
+                          <span className="flex-1 text-xs font-semibold text-slate-700">{row.value || '—'}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* 完成标准 */}
+                    {selectedTask.completion_standard && (
+                      <div>
+                        <p className="text-xs font-bold text-slate-500 mb-1.5">完成标准</p>
+                        <div className="rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2.5 text-xs text-indigo-900 leading-relaxed">{selectedTask.completion_standard}</div>
+                      </div>
+                    )}
+
+                    {/* 关键成果 */}
+                    {selectedTask.key_achievement && (
+                      <div>
+                        <p className="text-xs font-bold text-slate-500 mb-1.5">关键成果</p>
+                        <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2.5 text-xs text-amber-900 leading-relaxed">{selectedTask.key_achievement}</div>
+                      </div>
+                    )}
+
+                    {/* 子任务列表 */}
+                    {subTasks.length > 0 && (
+                      <div>
+                        <p className="text-xs font-bold text-slate-500 mb-1.5">子任务（{subTasks.length}）</p>
+                        <div className="space-y-1.5">
+                          {subTasks.map((sub) => {
+                            const subBadge = getBadge(sub.status)
+                            return (
+                              <div key={sub.id} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 flex items-start gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-semibold text-slate-700 leading-snug truncate">{sub.title}</p>
+                                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-semibold ${subBadge.cls}`}>
+                                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: subBadge.dot }} />{subBadge.label}
+                                    </span>
+                                    {sub.assignee && <span className="text-xs text-slate-400">{sub.assignee}</span>}
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={() => openSubDetail(sub)}
+                                  className="flex-shrink-0 text-xs text-indigo-500 hover:text-indigo-700 font-semibold px-2 py-1 rounded-md hover:bg-indigo-50 transition-colors"
+                                >
+                                  详情
+                                </button>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 操作栏 */}
+                  <div className="border-t px-4 py-3 flex gap-2 flex-wrap flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
+                    <button onClick={() => { setFormTask(selectedTask); setFormOpen(true) }} className="px-3 py-1.5 rounded-lg text-white text-xs font-bold" style={{ background: '#0284C7' }}>编辑</button>
+                    <button onClick={() => setProgressOpen(true)} className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 text-xs font-semibold">更新进展</button>
+                    {canOwn && <button onClick={() => setSubTaskFormOpen(true)} className="px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-600 text-xs font-semibold">添加子任务</button>}
+                    {canTrashTask && <button onClick={() => handleDelete(selectedTask)} className="px-3 py-1.5 rounded-lg border border-red-200 text-red-500 text-xs font-semibold">删除</button>}
+                  </div>
+                </div>
+              )
+            }
+
+            if (projectDetail) {
+              const projectTasks = groupedRows.find((row) => row.key === selectedProjectKey)?.tasks ?? []
+              return (
+                <div className="h-full flex flex-col">
+                  <div className="px-5 py-4 border-b" style={{ borderColor: '#E9EFF6' }}>
+                    <p className="text-xs font-semibold text-slate-400">项目详情</p>
+                    <h2 className="text-lg font-bold text-slate-900 mt-1">{projectDetail.name}</h2>
+                  </div>
+                  <div className="p-5 space-y-5">
+                    <div className="rounded-xl border overflow-hidden" style={{ borderColor: '#E9EFF6' }}>
+                      {[
+                        { label: '负责人', value: projectPeopleText(projectDetail.owners) },
+                        { label: '统筹人', value: projectPeopleText(projectDetail.coordinator) },
+                        { label: '协同人', value: projectPeopleText(projectDetail.collaborators) },
+                        { label: '关键任务', value: `${projectTasks.length} 个` },
+                      ].map((row) => (
+                        <div key={row.label} className="flex gap-3 px-4 py-3 border-b last:border-b-0" style={{ borderColor: '#F1F5F9' }}>
+                          <span className="w-16 shrink-0 text-xs font-semibold text-slate-400">{row.label}</span>
+                          <span className="flex-1 text-sm font-semibold text-slate-700 leading-relaxed">{row.value || '—'}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-500 mb-2">关键任务概览</p>
+                      <div className="space-y-2">
+                        {projectTasks.slice(0, 6).map((task) => (
+                          <button key={task.id} onClick={() => openDetail(task)} className="w-full text-left rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 hover:bg-blue-50">
+                            <p className="text-sm font-semibold text-slate-700 truncate">{task.key_task}</p>
+                            <p className="text-xs text-slate-400 mt-0.5">{task.status || '—'} · {shortDate(task.plan_time)}</p>
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                )}
-              </div>
+                </div>
+              )
+            }
 
-            </div>
+            return (
+              <div className="h-full flex items-center justify-center p-8 text-center">
+                <div>
+                  <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-500 flex items-center justify-center mx-auto mb-3">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 22, height: 22 }}><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5h6M9 12h6M9 19h6M5 5h.01M5 12h.01M5 19h.01" /></svg>
+                  </div>
+                  <p className="text-sm font-bold text-slate-700">选择左侧项目、关键任务或子任务查看详情</p>
+                  <p className="text-xs text-slate-400 mt-2 leading-relaxed">树状表格负责浏览层级，右侧面板负责查看和处理详情。</p>
+                </div>
+              </div>
+            )
+          })()}
+        </aside>
 
-            {isDeletedTask && canTrashTask ? (
-              <div className="px-4 py-3 border-t flex gap-2 flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
-                <button
-                  onClick={() => handleRestoreTask(selectedTask)}
-                  className="flex-1 py-2 rounded-lg text-white text-xs font-bold hover:opacity-90"
-                  style={{ background: 'linear-gradient(135deg,#C2410C,#FB923C)' }}
-                >
-                  恢复关键任务
-                </button>
-                <button
-                  onClick={() => setSelectedTask(null)}
-                  className="px-3 py-2 rounded-lg border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50"
-                >
-                  关闭
-                </button>
-              </div>
-            ) : isDeletedTask ? (
-              <div className="px-4 py-3 border-t flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
-                <p className="text-xs text-slate-400 text-center py-2">你当前没有恢复权限</p>
-              </div>
-            ) : progressOpen ? (
-              <div className="px-4 py-3 border-t flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
-                {progressSubmitState === 'done' ? (
-                  <p className="text-center text-xs text-emerald-600 font-semibold py-2">✓ 已提交，等待负责人审核</p>
-                ) : (
-                  <>
-                    <textarea
-                      className="w-full rounded-lg border border-slate-200 text-xs p-2 resize-none focus:outline-none focus:border-sky-400"
-                      rows={3}
-                      placeholder="请输入本次进展说明…"
-                      value={progressText}
-                      onChange={(e) => setProgressText(e.target.value)}
-                      disabled={progressSubmitState === 'submitting'}
-                    />
-                    <div className="flex gap-2 mt-2">
-                      <button
-                        onClick={handleProgressSubmit}
-                        disabled={!progressText.trim() || progressSubmitState === 'submitting'}
-                        className="flex-1 py-1.5 rounded-lg text-white text-xs font-bold disabled:opacity-50"
-                        style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}
-                      >
-                        {progressSubmitState === 'submitting' ? '提交中…' : '提交'}
-                      </button>
-                      <button
-                        onClick={() => { setProgressOpen(false); setProgressText(''); setProgressSubmitState('idle') }}
-                        className="flex-1 py-1.5 rounded-lg border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50"
-                      >
-                        取消
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            ) : (
-              <div className="px-4 py-3 border-t flex gap-2 flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
-                <button onClick={() => { setFormTask(selectedTask); setFormOpen(true) }} className="flex-1 py-2 rounded-lg text-white text-xs font-bold hover:opacity-90" style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}>编辑关键任务</button>
-                <button onClick={() => setProgressOpen(true)} className="flex-1 py-2 rounded-lg border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50">更新进展</button>
-                {canTrashTask && (
-                  <button
-                    onClick={() => handleDelete(selectedTask)}
-                    className="px-3 py-2 rounded-lg border text-xs font-semibold hover:bg-red-50"
-                    style={{ borderColor: '#FECACA', color: '#EF4444' }}
-                    title="删除关键任务及其子任务"
-                  >
-                    删除
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-          )
-        })()}
       </div>
     </div>
   )
@@ -1450,7 +1393,7 @@ function OutlineImportModal({ defaultProjectId, projects, onCreated, onClose }: 
                 </select>
                 {aiSuggestion && (
                   <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: aiSuggestion.confidence >= 0.9 ? '#F0FDF4' : '#FFFBEB', color: aiSuggestion.confidence >= 0.9 ? '#15803D' : '#B45309', border: `1px solid ${aiSuggestion.confidence >= 0.9 ? '#BBF7D0' : '#FDE68A'}` }}>
-                    ✦ AI推断 · {aiSuggestion.confidence >= 0.9 ? '高置信' : '中置信'}
+                    ? AI推断 · {aiSuggestion.confidence >= 0.9 ? '高置信' : '中置信'}
                   </span>
                 )}
               </div>
@@ -1619,7 +1562,7 @@ function SubTaskFormModal({ taskId, people, onSave, onClose }: {
   const labelCls = "block text-xs font-semibold text-slate-500 mb-1"
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(15,23,42,0.4)' }}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(15,23,42,0.4)' }}>
       <div className="bg-white rounded-2xl shadow-2xl w-full overflow-hidden" style={{ maxWidth: 480, maxHeight: '90vh' }}>
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: '#E9EFF6' }}>
           <div className="flex items-center gap-2">

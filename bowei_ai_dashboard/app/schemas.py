@@ -1,6 +1,13 @@
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class UserSubtaskContext(BaseModel):
+    id: int
+    title: str
+    status: str = ""
+    parent_key_task: str = ""
 
 
 class ExtractRequest(BaseModel):
@@ -13,6 +20,7 @@ class ExtractRequest(BaseModel):
     human_result: dict[str, Any] | None = None
     edited_suggestion: dict[str, Any] | None = None
     llm_provider: str | None = None
+    user_subtasks: list[UserSubtaskContext] | None = None
 
 
 class ConfirmationSaveRequest(BaseModel):
@@ -33,61 +41,93 @@ class StatusRequest(BaseModel):
     status: str
 
 
+class ResolveRequest(BaseModel):
+    resolution: str = ""
+
+
+class CloseRequest(BaseModel):
+    reason: str = ""
+
+
+class AssignHelperRequest(BaseModel):
+    helper: str
+
+
+class RequestCeoRequest(BaseModel):
+    need_decision_by: str
+    note: str = ""
+
+
 class TaskPayload(BaseModel):
     project_id: int | None = None
-    special_project: str = ""
-    key_task: str
-    key_achievement: str = ""
+    special_project: str = Field("", max_length=80)
+    key_task: str = Field(..., max_length=200)
+    key_achievement: str = Field("", max_length=200)
     completion_standard: str = ""
-    coordinator: str = ""
-    owner: str = ""
-    collaborators: str = ""
-    plan_time: str = ""
-    status: str = "未开始"
+    coordinator: str = Field("", max_length=50)
+    owner: str = Field("", max_length=50)
+    collaborators: str = Field("", max_length=200)
+    plan_time: str = Field("", max_length=20)
+    status: str = Field("未开始", max_length=20)
     problem_note: str = ""
     achievement_links: str = ""
-    source_type: str = "人工录入"
+    source_type: str = Field("人工录入", max_length=40)
+
+
+class AchievementSubmissionPayload(BaseModel):
+    project_id: int
+    related_task_id: int
+    name: str = Field(..., max_length=200)
+    achievement_type: str = Field("方案", max_length=40)
+    version: str = Field("V0.1", max_length=30)
+    file_link: str = ""
+    scenario: str = ""
+    reuse_tag: str = Field("", max_length=80)
+
+
+class AchievementSubmissionRejectRequest(BaseModel):
+    reject_reason: str = ""
 
 
 class AchievementPayload(BaseModel):
     project_id: int | None = None
-    name: str
-    achievement_type: str = "方案"
-    special_project: str = ""
+    name: str = Field(..., max_length=200)
+    achievement_type: str = Field("方案", max_length=40)
+    special_project: str = Field("", max_length=80)
     related_task_id: int | None = None
-    owner: str = ""
-    version: str = "V0.1"
+    owner: str = Field("", max_length=50)
+    version: str = Field("V0.1", max_length=30)
     file_link: str = ""
     scenario: str = ""
-    reuse_tag: str = ""
-    status: str = "计划中"
-    source_type: str = "人工录入"
+    reuse_tag: str = Field("", max_length=80)
+    status: str = Field("计划中", max_length=20)
+    source_type: str = Field("人工录入", max_length=40)
 
 
 class IssuePayload(BaseModel):
     project_id: int | None = None
-    issue_type: str = "问题"
+    issue_type: str = Field("问题", max_length=40)
     description: str
-    owner: str = ""
-    helper: str = ""
-    priority: str = "中"
-    status: str = "待处理"
-    need_decision_by: str = ""
-    expected_resolve_time: str = ""
+    owner: str = Field("", max_length=50)
+    helper: str = Field("", max_length=100)
+    priority: str = Field("中", max_length=10)
+    status: str = Field("待处理", max_length=20)
+    need_decision_by: str = Field("", max_length=50)
+    expected_resolve_time: str = Field("", max_length=20)
     resolution: str = ""
     related_task_id: int | None = None
-    special_project: str = ""
-    source_type: str = "人工录入"
+    special_project: str = Field("", max_length=80)
+    source_type: str = Field("人工录入", max_length=40)
 
 
 class PersonPayload(BaseModel):
-    name: str
-    role: str = ""
-    system_role: str = "普通成员"
-    department: str = ""
+    name: str = Field(..., max_length=50)
+    role: str = Field("", max_length=40)
+    system_role: str = Field("普通成员", max_length=40)
+    department: str = Field("", max_length=80)
     special_project_duty: str = ""
-    permission: str = "查看"
-    contact: str = ""
+    permission: str = Field("查看", max_length=40)
+    contact: str = Field("", max_length=100)
     is_active: bool = True
     is_admin: bool = False
     coordinated_projects: list[str] = []
@@ -144,17 +184,34 @@ class ProjectMemberPatchPayload(BaseModel):
 
 
 class ProjectCreatePayload(BaseModel):
-    name: str
-    code: str = ""
+    name: str = Field(..., max_length=100)
+    code: str = Field("", max_length=50)
     description: str = ""
-    status: str = "active"
-    start_date: str = ""
-    end_date: str = ""
+    status: str = Field("active", max_length=20)
+    start_date: str = Field("", max_length=20)
+    end_date: str = Field("", max_length=20)
     # 初始成员（可选），写入 project_members 并同步旧字段
     project_ceo_ids: list[int] = []
     owner_ids: list[int] = []
     coordinator_ids: list[int] = []
     member_ids: list[int] = []
+
+
+class BatchImportRow(BaseModel):
+    project_name: str
+    key_task: str = ""
+    key_achievement: str = ""
+    completion_standard: str = ""
+    coordinator: str = ""
+    owner: str = ""
+    collaborators: str = ""
+    plan_time: str = ""
+    status: str = "未开始"
+    issue: str = ""
+
+
+class ProjectBatchImportPayload(BaseModel):
+    rows: list[BatchImportRow]
 
 
 class ProjectPatchPayload(BaseModel):
@@ -188,10 +245,10 @@ class MeetingStatusPatch(BaseModel):
 
 
 class SubTaskPayload(BaseModel):
-    title: str
-    assignee: str
-    plan_time: str = ""
-    status: str = "未开始"
+    title: str = Field(..., max_length=200)
+    assignee: str = Field(..., max_length=50)
+    plan_time: str = Field("", max_length=50)
+    status: str = Field("未开始", max_length=20)
     completion_criteria: str = ""
     notes: str = ""
 
@@ -217,3 +274,26 @@ class TaskDraft(BaseModel):
 class TaskBatchCreateRequest(BaseModel):
     project_id: int
     tasks: list[TaskDraft]
+
+
+class SubTaskDraftItem(BaseModel):
+    title: str
+    assignee: str = ""
+    plan_time: str = ""
+    parent_task_id: int | None = None
+
+
+class SubTaskDraftsPayload(BaseModel):
+    project_id: int
+    source_submission_id: int | None = None
+    drafts: list[SubTaskDraftItem]
+
+
+class SubTaskDraftApprovePayload(BaseModel):
+    parent_task_id: int
+    assignee: str = ""
+    plan_time: str = ""
+
+
+class SubTaskDraftRejectPayload(BaseModel):
+    reason: str = ""

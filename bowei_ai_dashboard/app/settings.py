@@ -94,6 +94,7 @@ class RuntimeSettings:
     session_cookie_samesite: str
     session_ttl_days: int
     log_level: str
+    legacy_password_login_enabled: bool
 
     @property
     def session_ttl_seconds(self) -> int:
@@ -115,6 +116,7 @@ def get_settings() -> RuntimeSettings:
         session_cookie_samesite=_normalize_samesite(os.getenv("SESSION_COOKIE_SAMESITE")),
         session_ttl_days=_parse_ttl_days(os.getenv("SESSION_TTL_DAYS")),
         log_level=_normalize_loglevel(os.getenv("LOG_LEVEL")),
+        legacy_password_login_enabled=legacy_password_login_enabled(),
     )
 
 
@@ -144,6 +146,18 @@ def get_auth_passwords() -> dict[str, str]:
     if _allow_file_secret_fallback():
         return {str(k): str(v) for k, v in _read_json_file(_PASSWORDS_FILE).items() if k and v}
     return {}
+
+
+def legacy_password_login_enabled() -> bool:
+    raw = os.getenv("ALLOW_LEGACY_PASSWORD_LOGIN")
+    if raw is not None:
+        return parse_bool(raw, default=False)
+    return _get_app_env() != "production"
+
+
+def get_legacy_password_file_users() -> dict[str, str]:
+    """Return users from passwords.json for migration/audit screens."""
+    return {str(k): str(v) for k, v in _read_json_file(_PASSWORDS_FILE).items() if k and v}
 
 
 def get_llm_env_config(provider: str) -> dict[str, str]:

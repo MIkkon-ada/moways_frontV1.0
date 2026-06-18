@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from app.auth import hash_password
 from app.database import SessionLocal
 from app.main import app
-from app.models import Person, Project, ProjectMember
+from app.models import Issue, Person, Project, ProjectMember, SubTask
 from app.permissions import ROLE_NORMAL
 
 
@@ -198,6 +198,114 @@ def test_owner_confirmation_writes_selected_business_rows(case_data: CaseData, c
     achievements = owner.get("/api/achievements", params={"project_id": case_data.project_id}).json()
     assert [item["name"] for item in achievements] == ["selected-write achievement"]
     assert owner.get("/api/issues", params={"project_id": case_data.project_id}).json() == []
+
+
+def test_confirmation_infers_task_reports_without_frontend_write_mode(case_data: CaseData, client_pool):
+    owner = client_pool(case_data.owner)
+    member = client_pool(case_data.member)
+
+    task_resp = owner.post(
+        "/api/tasks",
+        json={
+            "project_id": case_data.project_id,
+            "special_project": case_data.project_name,
+            "key_task": "确认中心结构化进展",
+            "key_achievement": "形成可验收交付",
+            "completion_standard": "负责人确认后关闭",
+            "owner": case_data.owner,
+            "plan_time": "2026-06",
+            "status": "进行中",
+        },
+    )
+    assert task_resp.status_code == 200, task_resp.json()
+    task_id = task_resp.json()["id"]
+
+    # F: only owner/coordinator can directly create subtasks; member role is blocked
+    sub_resp = owner.post(
+        f"/api/tasks/{task_id}/subtasks",
+        json={
+            "title": "成员完成联调",
+            "assignee": case_data.member,
+            "plan_time": "2026-06",
+            "status": "进行中",
+        },
+    )
+    assert sub_resp.status_code == 200, sub_resp.json()
+    subtask_id = sub_resp.json()["id"]
+
+    submission = _submit_update(
+        member,
+        case_data,
+        "structured-progress",
+        {
+            "special_project": case_data.project_name,
+            "related_task": "确认中心结构化进展",
+            "task_reports": [
+                {
+                    "type": "progress",
+                    "matched_subtask_id": subtask_id,
+                    "matched_subtask_title": "成员完成联调",
+                    "completed": "联调已完成，等待负责人验收",
+                    "status_update": "已完成",
+                }
+            ],
+        },
+    )
+
+    confirmed = owner.post(
+        f"/api/confirmations/{submission['id']}/confirm",
+        json={"operator": case_data.owner},
+    )
+    assert confirmed.status_code == 200, confirmed.json()
+
+    with SessionLocal() as db:
+        subtask = db.get(SubTask, subtask_id)
+        assert subtask.status == "已完成"
+        assert subtask.source_submission_id == submission["id"]
+
+    parent = owner.get(f"/api/tasks/{task_id}")
+    assert parent.status_code == 200, parent.json()
+    assert parent.json()["status"] == "进行中"
+
+
+def test_confirmation_writes_key_task_issues_without_task_reports(case_data: CaseData, client_pool):
+    member = client_pool(case_data.member)
+    owner = client_pool(case_data.owner)
+
+    submission = _submit_update(
+        member,
+        case_data,
+        "structured-issue",
+        {
+            "special_project": case_data.project_name,
+            "related_task": "确认中心问题上报",
+            "key_task_issues": [
+                {
+                    "key_task_title": "确认中心问题上报",
+                    "issue_type": "需决策",
+                    "description": "需要负责人确认上线窗口",
+                    "need_coordination": ["负责人"],
+                    "priority": "高",
+                }
+            ],
+        },
+    )
+
+    confirmed = owner.post(
+        f"/api/confirmations/{submission['id']}/confirm",
+        json={"operator": case_data.owner},
+    )
+    assert confirmed.status_code == 200, confirmed.json()
+
+    with SessionLocal() as db:
+        issues = (
+            db.query(Issue)
+            .filter(Issue.project_id == case_data.project_id)
+            .order_by(Issue.id.asc())
+            .all()
+        )
+        assert [item.description for item in issues] == ["需要负责人确认上线窗口"]
+        assert issues[0].source_submission_id == submission["id"]
 
 
 def test_reject_resubmit_confirm_flow(case_data: CaseData, client_pool):

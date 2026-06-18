@@ -41,6 +41,7 @@ export function CoordinatePage() {
   const [completionMap, setCompletionMap]   = useState<Map<string, number>>(new Map())
   const [loading, setLoading]         = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
+  const [selectedPersonId, setSelectedPersonId]   = useState<number | null>(null)
   const [viewMode, setViewMode]       = useState<ViewMode>('project')
 
   useEffect(() => {
@@ -119,14 +120,40 @@ export function CoordinatePage() {
     return (personRoles.get(p.id) ?? []).map((r) => r.project.name)
   }
 
-  // 按选中专项过滤人员
-  const displayPeople = (() => {
-    if (!selectedProjectId) return people
-    const members = projectMembers.get(selectedProjectId) ?? []
-    const memberIds = new Set(members.map((m) => m.person_id))
-    const memberNames = new Set(members.map((m) => m.person_name_snapshot))
-    return people.filter((p) => memberIds.has(p.id) || memberNames.has(p.name))
+  // 当前用户可见的人员：管理员看全部，普通用户只看同项目成员
+  const visiblePeople = (() => {
+    if (currentUser?.can_view_all) return people
+    const ids = new Set<number>()
+    const names = new Set<string>()
+    projectMembers.forEach((members) => {
+      members.forEach((m) => { ids.add(m.person_id); names.add(m.person_name_snapshot) })
+    })
+    return people.filter((p) => ids.has(p.id) || names.has(p.name))
   })()
+
+  // 不过滤，用高亮代替——所有可见人员都显示
+  const displayPeople = visiblePeople
+
+  // 点选专项时：哪些人属于该专项（用于高亮人员卡）
+  const highlightedPersonIds = (() => {
+    if (!selectedProjectId) return null
+    const members = projectMembers.get(selectedProjectId) ?? []
+    return { ids: new Set(members.map(m => m.person_id)), names: new Set(members.map(m => m.person_name_snapshot)) }
+  })()
+
+  // 点选人员时：该人参与哪些专项（用于高亮专项卡）
+  const highlightedProjectIds = selectedPersonId
+    ? new Set((personRoles.get(selectedPersonId) ?? []).map(r => r.project.id))
+    : null
+
+  function isPersonLit(p: Person) {
+    if (!highlightedPersonIds) return true
+    return highlightedPersonIds.ids.has(p.id) || highlightedPersonIds.names.has(p.name)
+  }
+  function isProjectLit(projId: number) {
+    if (!highlightedProjectIds) return true
+    return highlightedProjectIds.has(projId)
+  }
 
   // 人在选中项目里的角色
   function getRoleInProject(p: Person, projectId: number): { label: string; cls: string } | null {
@@ -143,13 +170,13 @@ export function CoordinatePage() {
       <header className="h-14 flex items-center px-6 gap-3 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
         <div className="flex-1">
           <h1 className="text-base font-bold text-slate-800">组织与分工</h1>
-          {selectedProject ? (
-            <p className="text-xs text-blue-500 mt-0.5 cursor-pointer hover:underline" onClick={() => setSelectedProjectId(null)}>
-              ← 点击返回全部专项
-            </p>
-          ) : (
-            <p className="text-xs text-slate-400 mt-0.5">点击专项查看相关人员，再次点击取消。</p>
-          )}
+          <p className="text-xs text-slate-400 mt-0.5">
+            {selectedProjectId
+              ? '已选专项 — 相关人员高亮，再次点击取消'
+              : selectedPersonId
+              ? '已选人员 — 所属专项高亮，再次点击取消'
+              : '点击专项高亮相关人员；点击人员高亮其所属专项'}
+          </p>
         </div>
         {/* 视角切换 */}
         <div className="flex rounded-lg border overflow-hidden" style={{ borderColor: '#E9EFF6' }}>
@@ -165,17 +192,17 @@ export function CoordinatePage() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-6" style={{ background: '#F1F5F9' }}>
+      <div className="flex-1 overflow-y-auto p-6" style={{ background: '#F1F5F9' }}>
+      <div className="flex flex-col gap-6">
         {loading ? (
           <div className="py-16 text-center text-slate-400 text-sm">加载中…</div>
         ) : (
           <>
             {/* ── 专项卡片 ── */}
-            {viewMode === 'project' && (
-              <section>
+            <section style={{ order: viewMode === 'people' ? 2 : 1 }}>
                 <h2 className="text-sm font-bold text-slate-700 mb-3">
                   {projects.length} 个专项
-                  {selectedProject && <span className="ml-2 text-blue-500 font-normal">· 当前：{selectedProject.name}</span>}
+                  {selectedProjectId && selectedProject && <span className="ml-2 text-blue-500 font-normal">· 当前：{selectedProject.name}</span>}
                 </h2>
                 <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
                   {projects.map((proj, i) => {
@@ -183,15 +210,18 @@ export function CoordinatePage() {
                     const { coordinators, owners } = projectKeyPeople(proj)
                     const badge = myBadge(proj)
                     const isSelected = selectedProjectId === proj.id
+                    const lit = isProjectLit(proj.id)
                     const color = PROJ_COLORS[i % PROJ_COLORS.length]
                     return (
                       <div
                         key={proj.id}
-                        onClick={() => setSelectedProjectId(isSelected ? null : proj.id)}
+                        onClick={() => { setSelectedProjectId(isSelected ? null : proj.id); setSelectedPersonId(null) }}
                         className="bg-white rounded-2xl p-4 cursor-pointer transition-all hover:-translate-y-0.5"
                         style={{
                           border: `1.5px solid ${isSelected ? color : '#E9EFF6'}`,
                           boxShadow: isSelected ? `0 0 0 3px ${color}22` : '0 1px 4px rgba(15,23,42,0.06)',
+                          opacity: lit ? 1 : 0.35,
+                          transition: 'opacity 0.2s, border-color 0.2s, box-shadow 0.2s',
                         }}
                       >
                         <div className="flex items-start justify-between mb-2">
@@ -232,12 +262,11 @@ export function CoordinatePage() {
                   })}
                 </div>
               </section>
-            )}
 
             {/* ── 成员卡片 ── */}
-            <section>
+            <section style={{ order: viewMode === 'people' ? 1 : 2 }}>
               <h2 className="text-sm font-bold text-slate-700 mb-3">
-                {selectedProject ? `${selectedProject.name} · 成员` : '相关成员'}
+                {selectedProjectId && selectedProject ? `${selectedProject.name} · 成员` : '相关成员'}
                 <span className="ml-1.5 text-slate-400 font-normal">（{displayPeople.length} 人）</span>
               </h2>
               <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
@@ -245,11 +274,19 @@ export function CoordinatePage() {
                   const roleInProject = selectedProjectId ? getRoleInProject(p, selectedProjectId) : null
                   const { label: roleLabel, cls: roleCls } = roleInProject ?? getBestRole(p)
                   const duties = getProjectDuties(p)
+                  const isPersonSelected = selectedPersonId === p.id
+                  const lit = isPersonLit(p)
                   return (
                     <div
                       key={p.id}
-                      className="bg-white rounded-2xl p-4 transition-all hover:shadow-md"
-                      style={{ border: '1.5px solid #E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}
+                      onClick={() => { setSelectedPersonId(isPersonSelected ? null : p.id); setSelectedProjectId(null) }}
+                      className="bg-white rounded-2xl p-4 transition-all hover:shadow-md cursor-pointer"
+                      style={{
+                        border: `1.5px solid ${isPersonSelected ? '#2563EB' : '#E9EFF6'}`,
+                        boxShadow: isPersonSelected ? '0 0 0 3px #2563EB22' : '0 1px 4px rgba(15,23,42,0.06)',
+                        opacity: lit ? 1 : 0.35,
+                        transition: 'opacity 0.2s, border-color 0.2s, box-shadow 0.2s',
+                      }}
                     >
                       <div className="flex items-center gap-3 mb-3">
                         <div
@@ -282,7 +319,11 @@ export function CoordinatePage() {
                               return (
                                 <span
                                   key={r.project.id}
-                                  onClick={() => setSelectedProjectId(isActive ? null : r.project.id)}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setSelectedProjectId(isActive ? null : r.project.id)
+                                    setSelectedPersonId(null)
+                                  }}
                                   className="text-xs px-2 py-0.5 rounded-full cursor-pointer transition-all hover:opacity-90"
                                   style={{
                                     background: isActive ? color + '20' : '#F1F5F9',
@@ -306,6 +347,7 @@ export function CoordinatePage() {
             </section>
           </>
         )}
+      </div>
       </div>
     </div>
   )

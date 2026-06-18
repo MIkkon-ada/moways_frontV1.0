@@ -20,6 +20,8 @@ llm_configs.json
 
 # Databases
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 *.db-journal
@@ -28,6 +30,7 @@ llm_configs.json
 
 # Logs
 *.log
+*.err
 *.txt
 server.err.log
 server.out.log
@@ -66,11 +69,14 @@ coverage/
 *.bak
 *.old
 *.tmp
+_tmp_*.docx
 *.corrupt.*
 *.before_*
 *.ledger_*
 *.stable.*
 *_backup*.db
+backup/
+unpacked_*/
 
 # Local archive / generated reports
 _local_archive/

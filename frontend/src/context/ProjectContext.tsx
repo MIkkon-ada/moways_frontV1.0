@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { getCurrentUser, login as apiLogin, logout as apiLogout } from '../api/auth'
 import { getProjectCapabilities, getProjects } from '../api/projects'
 import { ApiError } from '../api/client'
+import { normalizeLoginError } from '../domain/authFlow'
 import type { CurrentUser, Project, ProjectCapabilities } from '../types'
 
 const LS_LAST_PROJECT = 'bowei_last_project_id'
@@ -22,6 +23,8 @@ type ProjectContextValue = {
   currentProjectId: number | null      // 第一事实来源：URL
   currentProject: Project | null
   currentProjectRoles: string[]
+  /** Union of the user's roles across ALL their projects — used for global capability checks. */
+  globalUserRoles: string[]
   /** Backend-computed capability flags for the current project. null while loading. */
   currentCapabilities: ProjectCapabilities | null
 
@@ -32,6 +35,7 @@ type ProjectContextValue = {
   logout: () => Promise<void>
   setCurrentProjectId: (id: number | null) => void   // 通过路由跳转实现
   reloadProjects: () => Promise<void>
+  refreshUser: () => Promise<void>
   /** 登录后/无 URL 时计算应落地的项目：单项目→其 id；多项目→localStorage 命中；否则 null */
   getPreferredProjectId: () => number | null
 }
@@ -87,7 +91,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     if (projects.length === 1) return projects[0].id
     const saved = localStorage.getItem(LS_LAST_PROJECT)
     const savedId = saved ? Number(saved) : NaN
-    return projects.find((p) => p.id === savedId)?.id ?? projects[0].id
+    return projects.find((p) => p.id === savedId)?.id ?? null
   }, [projects])
 
   // 启动探测会话
@@ -124,7 +128,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         await reloadProjects()
         setAuthState('authenticated')
       } catch (err) {
-        setError(err instanceof Error ? err.message : '登录失败')
+        setError(normalizeLoginError(err))
         throw err
       } finally {
         setLoading(false)
@@ -151,6 +155,12 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     [projects, currentProjectId],
   )
 
+  const globalUserRoles = useMemo(() => {
+    const s = new Set<string>()
+    projects.forEach(p => (p.user_roles ?? []).forEach(r => s.add(r)))
+    return Array.from(s)
+  }, [projects])
+
   // Fetch backend-computed capabilities whenever the active project changes
   useEffect(() => {
     if (currentProjectId === null || authState !== 'authenticated') {
@@ -164,6 +174,11 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true }
   }, [currentProjectId, authState])
 
+  const refreshUser = useCallback(async () => {
+    const user = await getCurrentUser()
+    setCurrentUser(user)
+  }, [])
+
   const value: ProjectContextValue = {
     authState,
     currentUser,
@@ -171,6 +186,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     currentProjectId,
     currentProject,
     currentProjectRoles: currentProject?.user_roles ?? [],
+    globalUserRoles,
     currentCapabilities,
     loading,
     error,
@@ -178,6 +194,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     logout,
     setCurrentProjectId,
     reloadProjects,
+    refreshUser,
     getPreferredProjectId,
   }
 

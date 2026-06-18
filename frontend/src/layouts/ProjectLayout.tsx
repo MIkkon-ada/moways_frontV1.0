@@ -3,9 +3,10 @@ import { useLocation, useNavigate, Outlet } from 'react-router-dom'
 import { Sidebar } from '../components/Sidebar'
 import { useProject } from '../context/ProjectContext'
 import { getPlatformSettings } from '../api/platformSettings'
+import { getProjectScopedNavigationDestination } from '../domain/authFlow'
 import type { AppPage } from '../types'
 
-type PageSegment = 'tasks' | 'achievements' | 'issues' | 'confirm' | 'coordinate' | 'decisions' | 'submit' | 'meeting' | 'settings'
+type PageSegment = 'tasks' | 'achievements' | 'issues' | 'confirm' | 'coordinate' | 'decisions' | 'submit' | 'meeting' | 'settings' | 'mytasks'
 
 const PATH_TO_PAGE: Record<PageSegment, AppPage> = {
   tasks: 'table',
@@ -17,6 +18,7 @@ const PATH_TO_PAGE: Record<PageSegment, AppPage> = {
   submit: 'voice',
   meeting: 'meeting',
   settings: 'settings',
+  mytasks: 'mytasks',
 }
 
 const PAGE_TO_PATH: Record<AppPage, string> = {
@@ -30,9 +32,11 @@ const PAGE_TO_PATH: Record<AppPage, string> = {
   voice: 'submit',
   meeting: 'meeting',
   settings: 'settings',
+  mytasks: 'mytasks',
 }
 
 export function NoProjectHome({ isAdmin }: { isAdmin: boolean }) {
+  const navigate = useNavigate()
   return (
     <div className="flex-1 flex items-center justify-center" style={{ background: '#F1F5F9' }}>
       <div className="flex flex-col items-center gap-4 text-center">
@@ -51,13 +55,13 @@ export function NoProjectHome({ isAdmin }: { isAdmin: boolean }) {
           </div>
         </div>
         {isAdmin && (
-          <a
-            href="/home/settings"
+          <button
+            onClick={() => navigate('/home/settings')}
             className="px-5 py-2 rounded-xl text-white text-sm font-semibold"
             style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}
           >
             前往系统设置
-          </a>
+          </button>
         )}
       </div>
     </div>
@@ -65,7 +69,7 @@ export function NoProjectHome({ isAdmin }: { isAdmin: boolean }) {
 }
 
 export function ProjectLayout() {
-  const { currentProjectId, currentUser, currentProjectRoles, logout, projects } = useProject()
+  const { currentProjectId, currentUser, globalUserRoles, logout, projects } = useProject()
   const location = useLocation()
   const navigate = useNavigate()
 
@@ -81,17 +85,17 @@ export function ProjectLayout() {
       .catch(() => {})
   }, [])
 
+  const isPrivileged = !!(
+    currentUser?.is_tech_admin ||
+    globalUserRoles.some(r => ['owner', 'coordinator', 'project_ceo'].includes(r))
+  )
+  const defaultPage: AppPage = isPrivileged ? 'dashboard' : 'mytasks'
+
   const segment = (location.pathname.split('/')[3] ?? '') as PageSegment | ''
-  const activePage: AppPage = segment && PATH_TO_PAGE[segment] ? PATH_TO_PAGE[segment] : 'dashboard'
+  const activePage: AppPage = segment && PATH_TO_PAGE[segment] ? PATH_TO_PAGE[segment] : defaultPage
 
   const handleNavigate = (page: AppPage) => {
-    const targetId = currentProjectId ?? (projects.length > 0 ? projects[0].id : null)
-    if (targetId === null) {
-      if (page === 'settings') navigate('/home/settings')
-      return
-    }
-    const suffix = PAGE_TO_PATH[page]
-    navigate(`/project/${targetId}${suffix ? `/${suffix}` : ''}`)
+    navigate(getProjectScopedNavigationDestination(page, currentProjectId, projects))
   }
 
   return (
@@ -100,7 +104,7 @@ export function ProjectLayout() {
         activePage={activePage}
         onNavigate={handleNavigate}
         currentUser={currentUser}
-        currentProjectRoles={currentProjectRoles}
+        globalUserRoles={globalUserRoles}
         onLogout={logout}
         logoUrl={logoUrl}
         platformName={platformName}

@@ -6,12 +6,12 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from sqlalchemy import text
 
 from . import models
-from .auth import create_session, delete_session, get_session_user, verify_password
+from .auth import create_session, delete_session, get_session_user, login_block_reason, verify_password
 from .database import Base, SessionLocal, engine
 from .excel_importer import read_project_assignments
 from .llm_config import PROVIDERS, load_configs
 from .settings import get_settings
-from .routers import achievements, admin, confirmations, dashboard, issues, llm_config, logs, meetings, people, platform_settings, projects, setup, subtasks, tasks, transcribe, updates
+from .routers import accounts, achievement_submissions, achievements, admin, confirmations, dashboard, issues, llm_config, logs, meetings, people, platform_settings, projects, setup, subtask_drafts, subtasks, tasks, transcribe, updates
 from .seed import EXCEL_SEED, seed
 
 logging.basicConfig(
@@ -116,6 +116,12 @@ def startup():
                     _conn.commit()
                 except Exception:
                     pass
+            if "source_achievement_submission_id" not in ach_cols:
+                try:
+                    _conn.execute(text("ALTER TABLE achievements ADD COLUMN source_achievement_submission_id INTEGER"))
+                    _conn.commit()
+                except Exception:
+                    pass
 
             # ── issues 表在线迁移 ─────────────────────────────────
             issue_cols = {row[1] for row in _conn.execute(text("PRAGMA table_info(issues)")).fetchall()}
@@ -147,6 +153,7 @@ def startup():
                 ("delete_reason", "ALTER TABLE subtasks ADD COLUMN delete_reason TEXT DEFAULT ''"),
                 ("delete_batch_id", "ALTER TABLE subtasks ADD COLUMN delete_batch_id VARCHAR(64) DEFAULT ''"),
                 ("deleted_by_parent_id", "ALTER TABLE subtasks ADD COLUMN deleted_by_parent_id INTEGER"),
+                ("source_submission_id", "ALTER TABLE subtasks ADD COLUMN source_submission_id INTEGER"),
             ):
                 if col not in sub_cols:
                     try:
@@ -154,6 +161,15 @@ def startup():
                         _conn.commit()
                     except Exception:
                         pass
+
+            # ── accounts 表在线迁移 ───────────────────────────────
+            acc_cols = {row[1] for row in _conn.execute(text("PRAGMA table_info(accounts)")).fetchall()}
+            if "must_change_password" not in acc_cols:
+                try:
+                    _conn.execute(text("ALTER TABLE accounts ADD COLUMN must_change_password INTEGER DEFAULT 0"))
+                    _conn.commit()
+                except Exception:
+                    pass
 
             # ── operation_logs 表在线迁移 ─────────────────────────
             log_cols = {row[1] for row in _conn.execute(text("PRAGMA table_info(operation_logs)")).fetchall()}
@@ -163,6 +179,20 @@ def startup():
                     _conn.commit()
                 except Exception:
                     pass
+
+            # ── subtask_drafts 表在线迁移 ─────────────────────────
+            draft_cols = {row[1] for row in _conn.execute(text("PRAGMA table_info(subtask_drafts)")).fetchall()}
+            if not draft_cols:
+                _conn.execute(text(
+                    "CREATE TABLE IF NOT EXISTS subtask_drafts ("
+                    "id INTEGER PRIMARY KEY, project_id INTEGER, parent_task_id INTEGER, "
+                    "title VARCHAR(200) NOT NULL, proposer VARCHAR(50) NOT NULL, "
+                    "assignee VARCHAR(50) DEFAULT '', plan_time VARCHAR(20) DEFAULT '', "
+                    "status VARCHAR(20) DEFAULT 'pending', reject_reason TEXT DEFAULT '', "
+                    "source_submission_id INTEGER, "
+                    "created_at DATETIME, updated_at DATETIME)"
+                ))
+                _conn.commit()
 
     # 清理过期 session（防止 auth_sessions 表长期无限增长）
     with SessionLocal() as _db:
@@ -227,6 +257,12 @@ async def auth_login(request: Request, response: Response):
     password = body.get("password") or ""
     if not username or not password:
         return JSONResponse({"detail": "姓名或密码不能为空"}, status_code=400)
+
+    blocked = login_block_reason(username)
+    if blocked:
+        status_code, detail = blocked
+        logger.warning("登录被拒绝: %s status=%s", username, status_code)
+        return JSONResponse({"detail": detail}, status_code=status_code)
 
     if not verify_password(username, password):
         logger.warning("登录失败: %s", username)
@@ -304,13 +340,16 @@ app.include_router(updates.router)
 app.include_router(confirmations.router)
 app.include_router(tasks.router)
 app.include_router(achievements.router)
+app.include_router(achievement_submissions.router)
 app.include_router(issues.router)
 app.include_router(meetings.router)
 app.include_router(people.router)
+app.include_router(accounts.router)
 app.include_router(projects.router)
 app.include_router(logs.router)
 app.include_router(llm_config.router)
 app.include_router(platform_settings.router)
 app.include_router(transcribe.router)
 app.include_router(subtasks.router)
+app.include_router(subtask_drafts.router)
 app.include_router(admin.router)
